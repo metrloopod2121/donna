@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 
@@ -723,7 +723,7 @@ def _download_recording_url(
     if twilio_account_sid and twilio_auth_token:
         token = f"{twilio_account_sid}:{twilio_auth_token}".encode("utf-8")
         headers["Authorization"] = f"Basic {base64.b64encode(token).decode('ascii')}"
-    elif bearer_token:
+    elif bearer_token and _is_exolve_recording_url(url):
         headers["Authorization"] = f"Bearer {bearer_token}"
     request = Request(url, headers=headers, method="GET")
     try:
@@ -734,6 +734,11 @@ def _download_recording_url(
         raise RuntimeError(f"recording download failed: {detail[:240]}") from exc
     except URLError as exc:
         raise RuntimeError(f"recording download failed: {exc.reason}") from exc
+
+
+def _is_exolve_recording_url(url: str) -> bool:
+    hostname = urlparse(url).hostname or ""
+    return hostname.casefold() == "api.exolve.ru"
 
 
 def _extract_json_object(text: str) -> Any:

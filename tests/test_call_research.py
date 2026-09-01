@@ -257,6 +257,24 @@ class CallResearchTest(TestCase):
         self.assertEqual(seen["authorization"], "Bearer exolve-secret")
         self.assertEqual(seen["url"], "https://api.exolve.ru/statistics/download/701234567890")
 
+    def test_download_recording_url_does_not_leak_bearer_to_other_hosts(self) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
+            seen["authorization"] = request.get_header(  # type: ignore[attr-defined]
+                "Authorization"
+            )
+            return _FakeResponse(b"audio")
+
+        with patch("telegram_secretary.call_research.urlopen", fake_urlopen):
+            _download_recording_url(
+                "https://recordings.example.com/audio",
+                timeout_seconds=20.0,
+                bearer_token="exolve-secret",
+            )
+
+        self.assertIsNone(seen["authorization"])
+
 
 def _request(questions: tuple[str, ...] = ("стоимость",)) -> BusinessCallRequest:
     return BusinessCallRequest(

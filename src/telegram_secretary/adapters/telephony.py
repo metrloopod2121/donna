@@ -15,6 +15,7 @@ from telegram_secretary.call_research import (
     CloudflareWorkerConversationAnalyzer,
     DryRunBusinessCallProvider,
     RuleBasedConversationAnalyzer,
+    WorkerWhisperTranscriber,
     build_business_call_script,
     normalize_phone_e164,
 )
@@ -196,6 +197,17 @@ def build_call_research_service(
         )
 
     transcriber = None
+    if (
+        config.voice_recording_transcriber in {"cloudflare_worker", "cloudflare_worker_whisper"}
+        and config.llm_worker_url
+        and config.llm_worker_bearer_token
+    ):
+        transcriber = WorkerWhisperTranscriber(
+            worker_url=config.llm_worker_url,
+            bearer_token=config.llm_worker_bearer_token,
+            twilio_account_sid=config.twilio_account_sid or None,
+            twilio_auth_token=config.twilio_auth_token or None,
+        )
     if (
         config.voice_recording_transcriber == "cloudflare_whisper"
         and config.cloudflare_account_id

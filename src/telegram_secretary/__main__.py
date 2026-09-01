@@ -200,8 +200,8 @@ def run_call_live_test(args: argparse.Namespace) -> None:
     if service.transcriber is None:
         raise SystemExit(
             "Для call-live-test включи STT: "
-            "VOICE_RECORDING_TRANSCRIBER=cloudflare_whisper, "
-            "CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN."
+            "VOICE_RECORDING_TRANSCRIBER=cloudflare_worker, "
+            "LLM_WORKER_URL и LLM_WORKER_BEARER_TOKEN."
         )
 
     request = service.create_request_from_command(

@@ -87,7 +87,8 @@ Craft, заметки и задачи:
 LLM:
 
 - `OPENAI_API_KEY` опционален для будущей LLM-классификации, суммаризации, голосового NLU и генерации черновиков.
-- `CALL_ANALYSIS_PROVIDER=rule_based` работает локально без внешних API. `CALL_ANALYSIS_PROVIDER=cloudflare_worker` отправляет транскрипт в `secretary-llm` Worker через `LLM_WORKER_URL` и `LLM_WORKER_BEARER_TOKEN`, ожидая строгий JSON с `summary`, `facts`, `missing_items`, `next_actions`.
+- `CALL_ANALYSIS_PROVIDER=rule_based` работает локально без внешних API. `CALL_ANALYSIS_PROVIDER=cloudflare_worker` отправляет транскрипт в `secretary-ai` Worker через `LLM_WORKER_URL` и `LLM_WORKER_BEARER_TOKEN`, ожидая строгий JSON с `summary`, `facts`, `missing_items`, `next_actions`.
+- `VOICE_RECORDING_TRANSCRIBER=cloudflare_worker` отправляет аудиозапись в тот же `secretary-ai` Worker на `/asr`, а Worker вызывает Cloudflare Whisper через AI binding. В сервисе не нужен `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_API_TOKEN`.
 - В стартовом каркасе есть rule-based ядро, чтобы политику безопасности можно было тестировать без внешних сервисов.
 
 ## Первый работающий релиз

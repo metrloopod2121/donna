@@ -7,6 +7,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from telegram_secretary.adapters.telephony import (
+    build_call_research_service,
     build_twilio_business_call_twiml,
     build_twilio_live_test_twiml,
 )
@@ -139,6 +140,22 @@ class CallResearchTest(TestCase):
         self.assertIn("<Record ", twiml)
         self.assertIn("timeout=\"5\"", twiml)
         self.assertNotIn("recordingStatusCallback", twiml)
+
+    def test_factory_uses_worker_for_transcription(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "VOICE_RECORDING_TRANSCRIBER": "cloudflare_worker",
+                "LLM_WORKER_URL": "https://secretary-ai.example.workers.dev",
+                "LLM_WORKER_BEARER_TOKEN": "secret",
+            },
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        service = build_call_research_service(config)
+
+        self.assertIsNotNone(service.transcriber)
 
 
 def _request(questions: tuple[str, ...] = ("стоимость",)) -> BusinessCallRequest:

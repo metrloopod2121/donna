@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "secretary-ai",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "workers_dev": true,
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "TEXT_MODEL": "@cf/meta/llama-3.1-8b-instruct-fast",
+    "ASR_MODEL": "@cf/openai/whisper"
+  }
+}

@@ -303,22 +303,62 @@ class CloudflareWhisperTranscriber:
         return result["text"].strip()
 
     def _download_recording(self, recording_url: str) -> bytes:
-        url = recording_url
-        if not re.search(r"\.(mp3|wav|m4a)(\?.*)?$", url, flags=re.IGNORECASE):
-            url = f"{url}.mp3"
-        headers = {"User-Agent": "telegram-secretary/0.1"}
-        if self.twilio_account_sid and self.twilio_auth_token:
-            token = f"{self.twilio_account_sid}:{self.twilio_auth_token}".encode("utf-8")
-            headers["Authorization"] = f"Basic {base64.b64encode(token).decode('ascii')}"
-        request = Request(url, headers=headers, method="GET")
+        return _download_recording_url(
+            recording_url,
+            timeout_seconds=self.timeout_seconds,
+            twilio_account_sid=self.twilio_account_sid,
+            twilio_auth_token=self.twilio_auth_token,
+        )
+
+
+class WorkerWhisperTranscriber:
+    def __init__(
+        self,
+        worker_url: str,
+        bearer_token: str,
+        timeout_seconds: float = 90.0,
+        twilio_account_sid: str | None = None,
+        twilio_auth_token: str | None = None,
+    ) -> None:
+        self.worker_url = worker_url.rstrip("/")
+        self.bearer_token = bearer_token
+        self.timeout_seconds = timeout_seconds
+        self.twilio_account_sid = twilio_account_sid
+        self.twilio_auth_token = twilio_auth_token
+
+    def transcribe(self, notice: CallRecordingNotice) -> str:
+        if not notice.recording_url:
+            raise RuntimeError("recording_url is required for Worker transcription")
+
+        audio = _download_recording_url(
+            notice.recording_url,
+            timeout_seconds=self.timeout_seconds,
+            twilio_account_sid=self.twilio_account_sid,
+            twilio_auth_token=self.twilio_auth_token,
+        )
+        request = Request(
+            f"{self.worker_url}/asr",
+            data=audio,
+            headers={
+                "Authorization": f"Bearer {self.bearer_token}",
+                "Content-Type": "application/octet-stream",
+                "User-Agent": "telegram-secretary/0.1",
+            },
+            method="POST",
+        )
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:
-                return response.read()
+                payload = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"recording download failed: {detail[:240]}") from exc
+            raise RuntimeError(f"worker transcription failed: {detail[:240]}") from exc
         except URLError as exc:
-            raise RuntimeError(f"recording download failed: {exc.reason}") from exc
+            raise RuntimeError(f"worker transcription failed: {exc.reason}") from exc
+
+        text = _transcription_text(payload)
+        if not text:
+            raise RuntimeError("worker transcription response has no text")
+        return text
 
 
 class CallResearchService:
@@ -643,6 +683,44 @@ def _llm_response_text(payload: dict[str, Any]) -> str:
         if isinstance(nested_text, str):
             return nested_text
     raise RuntimeError("LLM response text missing")
+
+
+def _transcription_text(payload: dict[str, Any]) -> str:
+    text = payload.get("text")
+    if isinstance(text, str):
+        return text.strip()
+    result = payload.get("result")
+    if isinstance(result, dict) and isinstance(result.get("text"), str):
+        return result["text"].strip()
+    response = payload.get("response")
+    if isinstance(response, dict) and isinstance(response.get("text"), str):
+        return response["text"].strip()
+    return ""
+
+
+def _download_recording_url(
+    recording_url: str,
+    *,
+    timeout_seconds: float,
+    twilio_account_sid: str | None = None,
+    twilio_auth_token: str | None = None,
+) -> bytes:
+    url = recording_url
+    if not re.search(r"\.(mp3|wav|m4a)(\?.*)?$", url, flags=re.IGNORECASE):
+        url = f"{url}.mp3"
+    headers = {"User-Agent": "telegram-secretary/0.1"}
+    if twilio_account_sid and twilio_auth_token:
+        token = f"{twilio_account_sid}:{twilio_auth_token}".encode("utf-8")
+        headers["Authorization"] = f"Basic {base64.b64encode(token).decode('ascii')}"
+    request = Request(url, headers=headers, method="GET")
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            return response.read()
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"recording download failed: {detail[:240]}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"recording download failed: {exc.reason}") from exc
 
 
 def _extract_json_object(text: str) -> Any:

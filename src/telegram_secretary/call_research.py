@@ -261,6 +261,7 @@ class CloudflareWhisperTranscriber:
         timeout_seconds: float = 90.0,
         twilio_account_sid: str | None = None,
         twilio_auth_token: str | None = None,
+        recording_bearer_token: str | None = None,
     ) -> None:
         self.account_id = account_id
         self.api_token = api_token
@@ -268,6 +269,7 @@ class CloudflareWhisperTranscriber:
         self.timeout_seconds = timeout_seconds
         self.twilio_account_sid = twilio_account_sid
         self.twilio_auth_token = twilio_auth_token
+        self.recording_bearer_token = recording_bearer_token
 
     def transcribe(self, notice: CallRecordingNotice) -> str:
         if not notice.recording_url:
@@ -308,6 +310,7 @@ class CloudflareWhisperTranscriber:
             timeout_seconds=self.timeout_seconds,
             twilio_account_sid=self.twilio_account_sid,
             twilio_auth_token=self.twilio_auth_token,
+            bearer_token=self.recording_bearer_token,
         )
 
 
@@ -319,12 +322,14 @@ class WorkerWhisperTranscriber:
         timeout_seconds: float = 90.0,
         twilio_account_sid: str | None = None,
         twilio_auth_token: str | None = None,
+        recording_bearer_token: str | None = None,
     ) -> None:
         self.worker_url = worker_url.rstrip("/")
         self.bearer_token = bearer_token
         self.timeout_seconds = timeout_seconds
         self.twilio_account_sid = twilio_account_sid
         self.twilio_auth_token = twilio_auth_token
+        self.recording_bearer_token = recording_bearer_token
 
     def transcribe(self, notice: CallRecordingNotice) -> str:
         if not notice.recording_url:
@@ -335,6 +340,7 @@ class WorkerWhisperTranscriber:
             timeout_seconds=self.timeout_seconds,
             twilio_account_sid=self.twilio_account_sid,
             twilio_auth_token=self.twilio_auth_token,
+            bearer_token=self.recording_bearer_token,
         )
         request = Request(
             f"{self.worker_url}/asr",
@@ -704,14 +710,21 @@ def _download_recording_url(
     timeout_seconds: float,
     twilio_account_sid: str | None = None,
     twilio_auth_token: str | None = None,
+    bearer_token: str | None = None,
 ) -> bytes:
     url = recording_url
-    if not re.search(r"\.(mp3|wav|m4a)(\?.*)?$", url, flags=re.IGNORECASE):
+    if (
+        twilio_account_sid
+        and twilio_auth_token
+        and not re.search(r"\.(mp3|wav|m4a)(\?.*)?$", url, flags=re.IGNORECASE)
+    ):
         url = f"{url}.mp3"
     headers = {"User-Agent": "telegram-secretary/0.1"}
     if twilio_account_sid and twilio_auth_token:
         token = f"{twilio_account_sid}:{twilio_auth_token}".encode("utf-8")
         headers["Authorization"] = f"Basic {base64.b64encode(token).decode('ascii')}"
+    elif bearer_token:
+        headers["Authorization"] = f"Bearer {bearer_token}"
     request = Request(url, headers=headers, method="GET")
     try:
         with urlopen(request, timeout=timeout_seconds) as response:

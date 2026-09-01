@@ -6,6 +6,7 @@ from collections.abc import Callable
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -236,12 +237,19 @@ def _missing_required_live_settings(config: AppConfig) -> list[str]:
     if config.telegram_bot_delivery_mode == "polling":
         required["TELEGRAM_BOT_TOKEN"] = config.telegram_bot_token
         required["SECRETARY_OWNER_TELEGRAM_ID"] = config.secretary_owner_telegram_id
-    if config.voice_business_calls_enabled and config.voice_business_call_provider == "twilio":
+    provider_name = config.voice_business_call_provider.casefold()
+    if config.voice_business_calls_enabled and provider_name == "twilio":
         required["TWILIO_ACCOUNT_SID"] = config.twilio_account_sid
         required["TWILIO_AUTH_TOKEN"] = config.twilio_auth_token
         required["TWILIO_FROM_PHONE_E164"] = config.twilio_from_phone_e164
         required["VOICE_WEBHOOK_BASE_URL"] = config.voice_webhook_base_url
         required["VOICE_WEBHOOK_SECRET"] = config.voice_webhook_secret
+    if config.voice_business_calls_enabled and provider_name in {
+        "exolve",
+        "mts_exolve",
+    }:
+        required["EXOLVE_API_KEY"] = config.exolve_api_key
+        required["EXOLVE_SOURCE_PHONE"] = config.exolve_source_phone
     if config.call_analysis_provider == "cloudflare_worker":
         required["LLM_WORKER_URL"] = config.llm_worker_url
         required["LLM_WORKER_BEARER_TOKEN"] = config.llm_worker_bearer_token
@@ -298,12 +306,13 @@ def _recording_notice_from_params(path: str, params: dict[str, str]) -> CallReco
         params.get("RecordingStatus")
         or params.get("TranscriptionStatus")
         or params.get("recording_status")
+        or params.get("status")
         or ("transcribed" if path.endswith("/transcription") else "completed")
     )
     return CallRecordingNotice(
         request_id=request_id,
         provider=params.get("provider", "twilio"),
-        provider_call_id=params.get("CallSid") or params.get("call_sid"),
+        provider_call_id=params.get("CallSid") or params.get("call_sid") or params.get("call_id"),
         recording_url=params.get("RecordingUrl") or params.get("recording_url"),
         recording_status=recording_status,
         duration_seconds=_optional_int(

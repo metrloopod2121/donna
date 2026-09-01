@@ -15,7 +15,7 @@ WORKDIR /app
 COPY src ./src
 COPY README.md pyproject.toml ./
 
-RUN python -m pip install --no-cache-dir "telethon>=1.41,<2" "twilio>=9.0"
+RUN python -m pip install --no-cache-dir "telethon>=1.41,<2"
 
 RUN mkdir -p /app/data /app/sessions \
     && chown -R 10001:10001 /app

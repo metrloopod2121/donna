@@ -68,6 +68,13 @@ class AppConfig:
     twilio_account_sid: str
     twilio_auth_token: str = field(repr=False)
     twilio_from_phone_e164: str
+    exolve_api_key: str = field(repr=False)
+    exolve_source_phone: str
+    exolve_tts_voice: int
+    exolve_tts_lang: int
+    exolve_tts_emotion: int
+    exolve_tts_volume: int
+    exolve_tts_speed: float
     call_analysis_provider: str
     llm_worker_url: str
     llm_worker_bearer_token: str = field(repr=False)
@@ -151,6 +158,13 @@ class AppConfig:
             twilio_account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
             twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
             twilio_from_phone_e164=os.getenv("TWILIO_FROM_PHONE_E164", ""),
+            exolve_api_key=os.getenv("EXOLVE_API_KEY", ""),
+            exolve_source_phone=os.getenv("EXOLVE_SOURCE_PHONE", ""),
+            exolve_tts_voice=int(os.getenv("EXOLVE_TTS_VOICE", "1")),
+            exolve_tts_lang=int(os.getenv("EXOLVE_TTS_LANG", "1")),
+            exolve_tts_emotion=int(os.getenv("EXOLVE_TTS_EMOTION", "1")),
+            exolve_tts_volume=int(os.getenv("EXOLVE_TTS_VOLUME", "-19")),
+            exolve_tts_speed=float(os.getenv("EXOLVE_TTS_SPEED", "1.05")),
             call_analysis_provider=os.getenv("CALL_ANALYSIS_PROVIDER", "rule_based"),
             llm_worker_url=os.getenv("LLM_WORKER_URL", ""),
             llm_worker_bearer_token=os.getenv("LLM_WORKER_BEARER_TOKEN", ""),

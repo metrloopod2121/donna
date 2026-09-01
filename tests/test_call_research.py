@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,9 +9,11 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from telegram_secretary.adapters.telephony import (
+    ExolveBusinessCallProvider,
     build_call_research_service,
     build_twilio_business_call_twiml,
     build_twilio_live_test_twiml,
+    _exolve_transcription_text,
 )
 from telegram_secretary.call_research import (
     BusinessCallRequest,
@@ -18,6 +22,7 @@ from telegram_secretary.call_research import (
     CallResearchService,
     DryRunBusinessCallProvider,
     RuleBasedConversationAnalyzer,
+    _download_recording_url,
     parse_business_call_argument,
     parse_llm_call_extraction,
 )
@@ -157,6 +162,101 @@ class CallResearchTest(TestCase):
 
         self.assertIsNotNone(service.transcriber)
 
+    def test_factory_uses_exolve_provider_when_enabled(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VOICE_BUSINESS_CALLS_ENABLED": "true",
+                "VOICE_BUSINESS_CALL_PROVIDER": "exolve",
+                "EXOLVE_API_KEY": "exolve-secret",
+                "EXOLVE_SOURCE_PHONE": "+79990000000",
+            },
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        service = build_call_research_service(config)
+
+        self.assertIsInstance(service.provider, ExolveBusinessCallProvider)
+
+    def test_exolve_provider_posts_make_voice_message(self) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
+            seen["url"] = getattr(request, "full_url")
+            seen["authorization"] = request.get_header(  # type: ignore[attr-defined]
+                "Authorization"
+            )
+            seen["payload"] = json.loads(request.data.decode("utf-8"))  # type: ignore[attr-defined]
+            seen["timeout"] = timeout
+            return _FakeResponse(b'{"call_id": 701234567890}')
+
+        with patch.dict(
+            os.environ,
+            {
+                "EXOLVE_API_KEY": "exolve-secret",
+                "EXOLVE_SOURCE_PHONE": "+79990000000",
+            },
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        with patch("telegram_secretary.adapters.telephony.urlopen", fake_urlopen):
+            placement = ExolveBusinessCallProvider(config).place_business_call(_request())
+
+        self.assertEqual(placement.provider, "exolve")
+        self.assertEqual(placement.provider_call_id, "701234567890")
+        self.assertEqual(seen["authorization"], "Bearer exolve-secret")
+        self.assertEqual(seen["url"], "https://api.exolve.ru/call/v1/MakeVoiceMessage")
+        self.assertEqual(seen["payload"]["source"], "79990000000")  # type: ignore[index]
+        self.assertEqual(seen["payload"]["destination"], "79991234567")  # type: ignore[index]
+        self.assertIn("tts", seen["payload"])  # type: ignore[operator]
+
+    def test_exolve_transcription_text_keeps_channel_roles(self) -> None:
+        text = _exolve_transcription_text(
+            {
+                "transcribation": [
+                    {
+                        "chunks": [
+                            {"channel_tag": 1, "text": "Подскажите стоимость."},
+                            {
+                                "channel_tag": 2,
+                                "text": "Абонемент стоит 12000 рублей.",
+                            },
+                        ]
+                    }
+                ]
+            }
+        )
+
+        self.assertIn("Робот: Подскажите стоимость.", text)
+        self.assertIn(
+            "Собеседник: Абонемент стоит 12000 рублей.",
+            text,
+        )
+
+    def test_download_recording_url_supports_exolve_bearer_auth(self) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
+            seen["url"] = getattr(request, "full_url")
+            seen["authorization"] = request.get_header(  # type: ignore[attr-defined]
+                "Authorization"
+            )
+            seen["timeout"] = timeout
+            return _FakeResponse(b"audio")
+
+        with patch("telegram_secretary.call_research.urlopen", fake_urlopen):
+            audio = _download_recording_url(
+                "https://api.exolve.ru/statistics/download/701234567890",
+                timeout_seconds=20.0,
+                bearer_token="exolve-secret",
+            )
+
+        self.assertEqual(audio, b"audio")
+        self.assertEqual(seen["authorization"], "Bearer exolve-secret")
+        self.assertEqual(seen["url"], "https://api.exolve.ru/statistics/download/701234567890")
+
 
 def _request(questions: tuple[str, ...] = ("стоимость",)) -> BusinessCallRequest:
     return BusinessCallRequest(
@@ -169,3 +269,17 @@ def _request(questions: tuple[str, ...] = ("стоимость",)) -> BusinessCa
         max_duration_seconds=480,
         requested_at=datetime.now(timezone.utc),
     )
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from telegram_secretary.adapters.telephony import (
+    ExolveLiveTestRunner,
     TwilioLiveTestRunner,
     build_call_research_service,
 )
@@ -197,42 +198,79 @@ def run_call_live_test(args: argparse.Namespace) -> None:
 
     config = AppConfig.from_env()
     service = build_call_research_service(config)
-    if service.transcriber is None:
-        raise SystemExit(
-            "Для call-live-test включи STT: "
-            "VOICE_RECORDING_TRANSCRIBER=cloudflare_worker, "
-            "LLM_WORKER_URL и LLM_WORKER_BEARER_TOKEN."
-        )
 
     request = service.create_request_from_command(
         parsed,
         max_duration_seconds=config.voice_business_call_max_duration_seconds,
     )
     try:
-        recording = TwilioLiveTestRunner(config).place_call_and_wait_for_recording(
-            request,
-            wait_seconds=args.wait_seconds,
-            poll_interval_seconds=args.poll_interval_seconds,
-        )
-        transcript_text = service.transcriber.transcribe(
-            CallRecordingNotice(
-                request_id=request.request_id,
-                provider="twilio",
-                provider_call_id=recording.call_sid,
-                recording_url=recording.recording_url,
-                recording_status="completed",
-                duration_seconds=recording.duration_seconds,
+        provider_name = config.voice_business_call_provider.casefold()
+        if provider_name in {"exolve", "mts_exolve"}:
+            recording = ExolveLiveTestRunner(config).place_call_and_wait_for_recording(
+                request,
+                wait_seconds=args.wait_seconds,
+                poll_interval_seconds=args.poll_interval_seconds,
             )
-        )
+            transcript_text = recording.transcription_text or ""
+            if not transcript_text:
+                if service.transcriber is None:
+                    raise RuntimeError(
+                        "Для Exolve включи STT: "
+                        "VOICE_RECORDING_TRANSCRIBER=cloudflare_worker, "
+                        "LLM_WORKER_URL и LLM_WORKER_BEARER_TOKEN."
+                    )
+                transcript_text = service.transcriber.transcribe(
+                    CallRecordingNotice(
+                        request_id=request.request_id,
+                        provider="exolve",
+                        provider_call_id=recording.call_id,
+                        recording_url=recording.recording_url,
+                        recording_status=recording.status,
+                        duration_seconds=recording.duration_seconds,
+                    )
+                )
+            provider_call_id = recording.call_id
+            recording_url = recording.recording_url
+            duration_seconds = recording.duration_seconds
+        elif provider_name == "twilio":
+            if service.transcriber is None:
+                raise RuntimeError(
+                    "Для Twilio включи STT: "
+                    "VOICE_RECORDING_TRANSCRIBER=cloudflare_worker, "
+                    "LLM_WORKER_URL и LLM_WORKER_BEARER_TOKEN."
+                )
+            recording = TwilioLiveTestRunner(config).place_call_and_wait_for_recording(
+                request,
+                wait_seconds=args.wait_seconds,
+                poll_interval_seconds=args.poll_interval_seconds,
+            )
+            transcript_text = service.transcriber.transcribe(
+                CallRecordingNotice(
+                    request_id=request.request_id,
+                    provider="twilio",
+                    provider_call_id=recording.call_sid,
+                    recording_url=recording.recording_url,
+                    recording_status="completed",
+                    duration_seconds=recording.duration_seconds,
+                )
+            )
+            provider_call_id = recording.call_sid
+            recording_url = recording.recording_url
+            duration_seconds = recording.duration_seconds
+        else:
+            raise RuntimeError(
+                "Для call-live-test поставь VOICE_BUSINESS_CALL_PROVIDER=exolve "
+                "и VOICE_BUSINESS_CALLS_ENABLED=true."
+            )
     except Exception as exc:
         raise SystemExit(f"call-live-test failed: {exc}") from exc
     transcript = CallTranscript(
         request_id=request.request_id,
-        provider_call_id=recording.call_sid,
+        provider_call_id=provider_call_id,
         transcript_text=transcript_text,
         source="call-live-test",
-        recording_url=recording.recording_url,
-        duration_seconds=recording.duration_seconds,
+        recording_url=recording_url,
+        duration_seconds=duration_seconds,
     )
     extraction = service.analyze_transcript(request, transcript)
     print(render_call_extraction(extraction))

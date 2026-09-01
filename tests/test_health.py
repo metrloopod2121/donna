@@ -76,3 +76,27 @@ class HealthPayloadTest(TestCase):
         self.assertEqual(status, 503)
         self.assertIn("TWILIO_ACCOUNT_SID", payload["missing_live_settings"])
         self.assertIn("VOICE_WEBHOOK_SECRET", payload["missing_live_settings"])
+
+    def test_readiness_requires_exolve_secrets_when_exolve_enabled(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "SECRETARY_RUNTIME_MODE": "telegram_polling",
+                "TELEGRAM_BOT_DELIVERY_MODE": "polling",
+                "TELEGRAM_BOT_TOKEN": "token",
+                "SECRETARY_OWNER_TELEGRAM_ID": "123",
+                "VOICE_BUSINESS_CALLS_ENABLED": "true",
+                "VOICE_BUSINESS_CALL_PROVIDER": "exolve",
+            },
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        status, payload = readiness_payload(
+            config,
+            polling_status={"enabled": True, "running": True, "bot_ok": True},
+        )
+
+        self.assertEqual(status, 503)
+        self.assertIn("EXOLVE_API_KEY", payload["missing_live_settings"])
+        self.assertIn("EXOLVE_SOURCE_PHONE", payload["missing_live_settings"])

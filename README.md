@@ -81,6 +81,7 @@ Craft, заметки и задачи:
 - Исходящий звонок: только владельцу, только по правилам `CALL_REMINDER_*`, с quiet hours и rate limit.
 - Business research-звонок: owner-only команда `/call +79991234567 | Теннисный клуб | узнать абонементы; какие дни свободны` создает запрос, строит сценарий, просит собеседника ответить после сигнала, сохраняет запись/транскрипт и запускает post-processing.
 - `VOICE_BUSINESS_CALL_PROVIDER=dry_run` не звонит, а показывает сценарий. Для реального транспорта подготовлен `VOICE_BUSINESS_CALL_PROVIDER=twilio` с `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_PHONE_E164`, `VOICE_WEBHOOK_BASE_URL` и `VOICE_WEBHOOK_SECRET`.
+- Для первой настоящей проверки без публичного webhook есть CLI `call-live-test`: он звонит через Twilio, ждёт recording в Twilio REST API, скачивает запись, отправляет её в Cloudflare Whisper и затем разбирает транскрипт.
 - Для русского языка встроенная транскрибация провайдера не считается обязательной: сервис принимает готовый transcript callback или может скачать recording URL и отправить запись в `VOICE_RECORDING_TRANSCRIBER=cloudflare_whisper`.
 
 LLM:
@@ -186,4 +187,5 @@ python -m unittest discover -s tests
 PYTHONPATH=src python -m telegram_secretary simulate --sender-id 42 --text "Ты свободен завтра днем?"
 PYTHONPATH=src python -m telegram_secretary call-dry-run "+79991234567 | Теннисный клуб | узнать стоимость абонемента; какие дни свободны"
 PYTHONPATH=src python -m telegram_secretary call-analyze "+79991234567 | Ресторан | есть ли стол на 20:00" --transcript "Стол на 20:00 можно забронировать, депозит не нужен."
+PYTHONPATH=src python -m telegram_secretary call-live-test "+79991234567 | Тест | что я сказал после сигнала"
 ```

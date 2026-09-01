@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass
 from html import escape
 from urllib.parse import urlencode
 
@@ -90,6 +92,86 @@ class TwilioBusinessCallProvider:
             raise RuntimeError(f"Business calls are allowed only for prefixes: {allowed}")
 
 
+@dataclass(frozen=True)
+class TwilioRecordingRef:
+    call_sid: str
+    recording_sid: str
+    recording_url: str
+    duration_seconds: int | None
+
+
+class TwilioLiveTestRunner:
+    """Place one call and poll Twilio REST for the resulting recording.
+
+    This bypasses public webhooks, so it is useful for a first real phone test
+    from a developer shell: call self, speak after the beep, poll the recording,
+    then send the audio to STT/post-processing.
+    """
+
+    def __init__(self, config: AppConfig) -> None:
+        self.config = config
+
+    def place_call_and_wait_for_recording(
+        self,
+        request: BusinessCallRequest,
+        *,
+        wait_seconds: int = 240,
+        poll_interval_seconds: float = 5.0,
+    ) -> TwilioRecordingRef:
+        self._validate_configured()
+        try:
+            from twilio.rest import Client
+        except ImportError as exc:
+            raise RuntimeError(
+                "Twilio SDK is not installed. Install telegram-secretary[voice]."
+            ) from exc
+
+        client = Client(self.config.twilio_account_sid, self.config.twilio_auth_token)
+        call = client.calls.create(
+            to=request.phone_e164,
+            from_=normalize_phone_e164(self.config.twilio_from_phone_e164),
+            twiml=build_twilio_live_test_twiml(request),
+        )
+        call_sid = _required_str(getattr(call, "sid", None), "Twilio call SID")
+        deadline = time.monotonic() + wait_seconds
+        terminal_statuses = {"busy", "failed", "no-answer", "canceled"}
+
+        while time.monotonic() < deadline:
+            recordings = client.recordings.list(call_sid=call_sid, limit=10)
+            for recording in recordings:
+                recording_sid = getattr(recording, "sid", None)
+                recording_status = str(getattr(recording, "status", "") or "")
+                if recording_sid and recording_status in {"completed", ""}:
+                    return TwilioRecordingRef(
+                        call_sid=call_sid,
+                        recording_sid=str(recording_sid),
+                        recording_url=_twilio_recording_url(
+                            self.config.twilio_account_sid,
+                            str(recording_sid),
+                        ),
+                        duration_seconds=_optional_recording_duration(recording),
+                    )
+
+            current_call = client.calls(call_sid).fetch()
+            status = str(getattr(current_call, "status", "") or "")
+            if status in terminal_statuses:
+                raise RuntimeError(f"Twilio call ended without recording: {status}")
+            time.sleep(poll_interval_seconds)
+
+        raise RuntimeError("Timed out waiting for Twilio recording.")
+
+    def _validate_configured(self) -> None:
+        missing = []
+        if not self.config.twilio_account_sid:
+            missing.append("TWILIO_ACCOUNT_SID")
+        if not self.config.twilio_auth_token:
+            missing.append("TWILIO_AUTH_TOKEN")
+        if not self.config.twilio_from_phone_e164:
+            missing.append("TWILIO_FROM_PHONE_E164")
+        if missing:
+            raise RuntimeError("Missing Twilio live-test settings: " + ", ".join(missing))
+
+
 def build_call_research_service(
     config: AppConfig,
     store: CallResearchStore | None = None,
@@ -156,6 +238,26 @@ def build_twilio_business_call_twiml(request: BusinessCallRequest, config: AppCo
     )
 
 
+def build_twilio_live_test_twiml(request: BusinessCallRequest) -> str:
+    script = build_business_call_script(request)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        "<Response>"
+        f'<Say language="ru-RU">{escape(script)}</Say>'
+        "<Record "
+        f'maxLength="{request.max_duration_seconds}" '
+        'playBeep="true" '
+        'trim="trim-silence" '
+        'timeout="5" '
+        "/>"
+        '<Say language="ru-RU">'
+        "Спасибо, я передам информацию Матвею."
+        "</Say>"
+        "<Hangup/>"
+        "</Response>"
+    )
+
+
 def recorded_twiml() -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
@@ -172,3 +274,26 @@ def _callback_url(config: AppConfig, path: str, request_id: str) -> str:
     base_url = config.voice_webhook_base_url.rstrip("/")
     query = urlencode({"request_id": request_id, "token": config.voice_webhook_secret})
     return f"{base_url}{path}?{query}"
+
+
+def _twilio_recording_url(account_sid: str, recording_sid: str) -> str:
+    return (
+        f"https://api.twilio.com/2010-04-01/Accounts/{account_sid}"
+        f"/Recordings/{recording_sid}"
+    )
+
+
+def _required_str(value: object, name: str) -> str:
+    if isinstance(value, str) and value:
+        return value
+    raise RuntimeError(f"{name} is missing.")
+
+
+def _optional_recording_duration(recording: object) -> int | None:
+    duration = getattr(recording, "duration", None)
+    if duration is None:
+        return None
+    try:
+        return int(duration)
+    except (TypeError, ValueError):
+        return None

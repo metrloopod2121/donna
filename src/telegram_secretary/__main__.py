@@ -5,10 +5,14 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from telegram_secretary.adapters.telephony import build_call_research_service
+from telegram_secretary.adapters.telephony import (
+    TwilioLiveTestRunner,
+    build_call_research_service,
+)
 from telegram_secretary.calendar import BusyWindow, StaticCalendarProvider, default_business_window
 from telegram_secretary.call_research import (
     CallResearchService,
+    CallRecordingNotice,
     CallTranscript,
     DryRunBusinessCallProvider,
     parse_business_call_argument,
@@ -67,6 +71,14 @@ def main() -> None:
     transcript_source.add_argument("--transcript")
     transcript_source.add_argument("--transcript-file")
 
+    call_live_test = subparsers.add_parser(
+        "call-live-test",
+        help="Place one real phone call, wait for the recording, transcribe and analyze it",
+    )
+    call_live_test.add_argument("request", help="Same format as /call")
+    call_live_test.add_argument("--wait-seconds", type=int, default=240)
+    call_live_test.add_argument("--poll-interval-seconds", type=float, default=5.0)
+
     telegram_login = subparsers.add_parser(
         "telegram-login",
         help="Run one-time server-console Telethon login for the owner's personal account",
@@ -97,6 +109,8 @@ def main() -> None:
         run_call_dry_run(args)
     elif args.command == "call-analyze":
         run_call_analyze(args)
+    elif args.command == "call-live-test":
+        run_call_live_test(args)
     elif args.command == "telegram-login":
         raise SystemExit(run_telethon_login_command(args))
 
@@ -171,6 +185,51 @@ def run_call_analyze(args: argparse.Namespace) -> None:
         provider_call_id=None,
         transcript_text=transcript_text,
         source="cli",
+    )
+    extraction = service.analyze_transcript(request, transcript)
+    print(render_call_extraction(extraction))
+
+
+def run_call_live_test(args: argparse.Namespace) -> None:
+    parsed = parse_business_call_argument(args.request)
+    if not parsed.is_valid:
+        raise SystemExit(parsed.error)
+
+    config = AppConfig.from_env()
+    service = build_call_research_service(config)
+    if service.transcriber is None:
+        raise SystemExit(
+            "Для call-live-test включи STT: "
+            "VOICE_RECORDING_TRANSCRIBER=cloudflare_whisper, "
+            "CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN."
+        )
+
+    request = service.create_request_from_command(
+        parsed,
+        max_duration_seconds=config.voice_business_call_max_duration_seconds,
+    )
+    recording = TwilioLiveTestRunner(config).place_call_and_wait_for_recording(
+        request,
+        wait_seconds=args.wait_seconds,
+        poll_interval_seconds=args.poll_interval_seconds,
+    )
+    transcript_text = service.transcriber.transcribe(
+        CallRecordingNotice(
+            request_id=request.request_id,
+            provider="twilio",
+            provider_call_id=recording.call_sid,
+            recording_url=recording.recording_url,
+            recording_status="completed",
+            duration_seconds=recording.duration_seconds,
+        )
+    )
+    transcript = CallTranscript(
+        request_id=request.request_id,
+        provider_call_id=recording.call_sid,
+        transcript_text=transcript_text,
+        source="call-live-test",
+        recording_url=recording.recording_url,
+        duration_seconds=recording.duration_seconds,
     )
     extraction = service.analyze_transcript(request, transcript)
     print(render_call_extraction(extraction))

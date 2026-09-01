@@ -81,6 +81,7 @@ VOICE_OUTBOUND_ENABLED=false
   - `/call +79991234567 | Теннисный клуб | узнать стоимость абонемента; какие дни свободны`;
   - CLI `call-dry-run`;
   - CLI `call-analyze`;
+  - CLI `call-live-test` для первого реального звонка без публичного webhook: Twilio call -> poll recording -> Cloudflare Whisper -> analyzer;
   - SQLite tables для call request, placement, recording notice, transcript, extraction;
   - webhook endpoints `/voice/business/recording`, `/voice/business/transcription`, `/voice/business/status`, `/voice/business/recorded`;
   - dry-run provider по умолчанию;

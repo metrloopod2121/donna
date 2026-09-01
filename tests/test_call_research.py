@@ -6,7 +6,10 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 
-from telegram_secretary.adapters.telephony import build_twilio_business_call_twiml
+from telegram_secretary.adapters.telephony import (
+    build_twilio_business_call_twiml,
+    build_twilio_live_test_twiml,
+)
 from telegram_secretary.call_research import (
     BusinessCallRequest,
     BusinessCallStatus,
@@ -129,6 +132,13 @@ class CallResearchTest(TestCase):
         self.assertIn("recordingStatusCallback", twiml)
         self.assertIn("request_id=call_test", twiml)
         self.assertIn("token=hook-secret", twiml)
+
+    def test_twilio_live_test_twiml_does_not_require_public_callback(self) -> None:
+        twiml = build_twilio_live_test_twiml(_request())
+
+        self.assertIn("<Record ", twiml)
+        self.assertIn("timeout=\"5\"", twiml)
+        self.assertNotIn("recordingStatusCallback", twiml)
 
 
 def _request(questions: tuple[str, ...] = ("стоимость",)) -> BusinessCallRequest:

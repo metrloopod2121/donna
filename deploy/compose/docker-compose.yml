@@ -1,0 +1,30 @@
+name: telegram-secretary
+
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile
+    image: telegram-secretary:local
+    container_name: telegram-secretary-app
+    restart: unless-stopped
+    env_file:
+      - /etc/telegram-secretary/runtime.env
+      - /etc/telegram-secretary/secrets.env
+    environment:
+      SECRETARY_HEALTH_HOST: 0.0.0.0
+      SECRETARY_HEALTH_PORT: 8080
+    ports:
+      - "${SECRETARY_HOST_BIND:-127.0.0.1}:${SECRETARY_HOST_PORT:-18097}:8080"
+    volumes:
+      - /var/lib/telegram-secretary/data:/app/data
+      - /var/lib/telegram-secretary/sessions:/app/sessions
+      - /var/lib/telegram-secretary/craft-export:/app/data/craft-export:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+

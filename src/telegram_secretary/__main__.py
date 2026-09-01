@@ -208,21 +208,24 @@ def run_call_live_test(args: argparse.Namespace) -> None:
         parsed,
         max_duration_seconds=config.voice_business_call_max_duration_seconds,
     )
-    recording = TwilioLiveTestRunner(config).place_call_and_wait_for_recording(
-        request,
-        wait_seconds=args.wait_seconds,
-        poll_interval_seconds=args.poll_interval_seconds,
-    )
-    transcript_text = service.transcriber.transcribe(
-        CallRecordingNotice(
-            request_id=request.request_id,
-            provider="twilio",
-            provider_call_id=recording.call_sid,
-            recording_url=recording.recording_url,
-            recording_status="completed",
-            duration_seconds=recording.duration_seconds,
+    try:
+        recording = TwilioLiveTestRunner(config).place_call_and_wait_for_recording(
+            request,
+            wait_seconds=args.wait_seconds,
+            poll_interval_seconds=args.poll_interval_seconds,
         )
-    )
+        transcript_text = service.transcriber.transcribe(
+            CallRecordingNotice(
+                request_id=request.request_id,
+                provider="twilio",
+                provider_call_id=recording.call_sid,
+                recording_url=recording.recording_url,
+                recording_status="completed",
+                duration_seconds=recording.duration_seconds,
+            )
+        )
+    except Exception as exc:
+        raise SystemExit(f"call-live-test failed: {exc}") from exc
     transcript = CallTranscript(
         request_id=request.request_id,
         provider_call_id=recording.call_sid,

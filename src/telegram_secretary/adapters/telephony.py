@@ -31,6 +31,7 @@ _EXOLVE_MAKE_VOICE_MESSAGE_URL = "https://api.exolve.ru/call/v1/MakeVoiceMessage
 _EXOLVE_VOICE_MESSAGE_INFO_URL = "https://api.exolve.ru/call/v1/GetInfo"
 _EXOLVE_TRANSCRIPTION_URL = "https://api.exolve.ru/statistics/call-record/v1/GetTranscribation"
 _EXOLVE_RECORDING_DOWNLOAD_URL = "https://api.exolve.ru/statistics/download"
+_VOXIMPLANT_START_SCENARIOS_URL = "https://api.voximplant.com/platform_api/StartScenarios"
 
 
 class TelephonyVoiceProvider(VoiceProvider):
@@ -149,6 +150,65 @@ class ExolveBusinessCallProvider:
             missing.append("EXOLVE_SOURCE_PHONE")
         if missing:
             raise RuntimeError("Missing Exolve business call settings: " + ", ".join(missing))
+
+        prefixes = self.config.voice_business_call_allowed_prefixes
+        if prefixes and not any(phone_e164.startswith(prefix) for prefix in prefixes):
+            allowed = ", ".join(sorted(prefixes))
+            raise RuntimeError(f"Business calls are allowed only for prefixes: {allowed}")
+
+
+class VoximplantDialogueCallProvider:
+    """Start a Voximplant outbound dialogue scenario for business research calls."""
+
+    def __init__(self, config: AppConfig) -> None:
+        self.config = config
+
+    def place_business_call(self, request: BusinessCallRequest) -> BusinessCallPlacement:
+        self._validate_configured(request.phone_e164)
+        token = _voximplant_management_token(self.config)
+        start_data = _voximplant_start_custom_data(request, self.config)
+        payload = {
+            "rule_id": self.config.voximplant_rule_id,
+            "script_custom_data": json.dumps(start_data, ensure_ascii=False),
+        }
+        response = _voximplant_post_form(
+            _VOXIMPLANT_START_SCENARIOS_URL,
+            token,
+            payload,
+            timeout_seconds=30.0,
+        )
+        _validate_voximplant_response(response)
+        _voximplant_push_session_task(
+            response,
+            _voximplant_script_custom_data(request, self.config),
+            timeout_seconds=30.0,
+        )
+        provider_call_id = _voximplant_call_id(response)
+        return BusinessCallPlacement(
+            request_id=request.request_id,
+            provider="voximplant_dialog",
+            status=BusinessCallStatus.QUEUED,
+            provider_call_id=provider_call_id,
+            message="Voximplant accepted outbound dialogue scenario.",
+        )
+
+    def _validate_configured(self, phone_e164: str) -> None:
+        missing = []
+        if not (
+            self.config.voximplant_credentials_json
+            or self.config.voximplant_credentials_file.is_file()
+        ):
+            missing.append("VOXIMPLANT_CREDENTIALS_JSON or VOXIMPLANT_CREDENTIALS_FILE")
+        if not self.config.voximplant_rule_id:
+            missing.append("VOXIMPLANT_RULE_ID")
+        if not self.config.voximplant_caller_id:
+            missing.append("VOXIMPLANT_CALLER_ID")
+        if not self.config.voximplant_worker_url:
+            missing.append("VOXIMPLANT_WORKER_URL or LLM_WORKER_URL")
+        if missing:
+            raise RuntimeError(
+                "Missing Voximplant dialogue call settings: " + ", ".join(missing)
+            )
 
         prefixes = self.config.voice_business_call_allowed_prefixes
         if prefixes and not any(phone_e164.startswith(prefix) for prefix in prefixes):
@@ -317,6 +377,13 @@ def build_call_research_service(
         provider = TwilioBusinessCallProvider(config)
     if config.voice_business_calls_enabled and provider_name in {"exolve", "mts_exolve"}:
         provider = ExolveBusinessCallProvider(config)
+    if config.voice_business_calls_enabled and provider_name in {
+        "vox",
+        "voximplant",
+        "voximplant_dialog",
+        "voximplant_dialogue",
+    }:
+        provider = VoximplantDialogueCallProvider(config)
 
     fallback = RuleBasedConversationAnalyzer()
     analyzer = fallback
@@ -522,6 +589,219 @@ def _exolve_channel_role(channel_tag: object) -> str:
 def _exolve_transcription_missing(exc: RuntimeError) -> bool:
     text = str(exc).casefold()
     return "404" in text or "not found transcribation" in text or "not found transcription" in text
+
+
+def _voximplant_script_custom_data(
+    request: BusinessCallRequest,
+    config: AppConfig,
+) -> dict[str, Any]:
+    return {
+        "requestId": request.request_id,
+        "targetName": _trim_text(request.target_name, 160),
+        "destination": normalize_phone_e164(request.phone_e164),
+        "callerId": normalize_phone_e164(config.voximplant_caller_id),
+        "goal": _trim_text(request.goal, 600),
+        "questions": [_trim_text(question, 260) for question in request.questions[:12]],
+        "language": request.language or "ru",
+        "workerUrl": config.voximplant_worker_url.rstrip("/"),
+        "workerSecretName": config.voximplant_worker_secret_name or "SECRETARY_AI_TOKEN",
+        "ownerTelegramChatId": config.secretary_owner_telegram_id,
+        "maxTurns": max(1, min(config.voximplant_max_turns, 20)),
+        "maxDurationSeconds": max(60, min(request.max_duration_seconds, 1800)),
+        "asrLanguage": config.voximplant_asr_language or "ASRLanguage.RUSSIAN_RU",
+        "voice": config.voximplant_voice or "VoiceList.Yandex.ru_RU_oksana",
+    }
+
+
+def _voximplant_start_custom_data(
+    request: BusinessCallRequest,
+    config: AppConfig,
+) -> dict[str, str]:
+    return {
+        "r": request.request_id,
+        "u": config.voximplant_worker_url.rstrip("/"),
+        "s": config.voximplant_worker_secret_name or "SECRETARY_AI_TOKEN",
+    }
+
+
+def _voximplant_management_token(config: AppConfig) -> str:
+    credentials = _load_voximplant_credentials(config)
+    account_id = _credential_value(credentials, "account_id", "accountId", "account")
+    key_id = _credential_value(credentials, "key_id", "keyId", "kid")
+    private_key = _credential_value(credentials, "private_key", "privateKey")
+    if not account_id or not key_id or not private_key:
+        raise RuntimeError(
+            "Voximplant credentials JSON must contain account_id, key_id and private_key."
+        )
+
+    try:
+        import jwt
+    except ImportError as exc:
+        raise RuntimeError(
+            "PyJWT is not installed. Install telegram-secretary[voximplant] "
+            "or rebuild the Docker image."
+        ) from exc
+
+    now = int(time.time())
+    issuer: str | int = account_id
+    if str(account_id).isdigit():
+        issuer = int(str(account_id))
+    token = jwt.encode(
+        {"iat": now, "iss": issuer, "exp": now + 3600},
+        private_key,
+        algorithm="RS256",
+        headers={"kid": key_id, "typ": "JWT"},
+    )
+    if isinstance(token, bytes):
+        return token.decode("ascii")
+    return str(token)
+
+
+def _load_voximplant_credentials(config: AppConfig) -> dict[str, Any]:
+    raw = config.voximplant_credentials_json.strip()
+    if not raw:
+        path = config.voximplant_credentials_file
+        if not str(path):
+            raise RuntimeError(
+                "VOXIMPLANT_CREDENTIALS_JSON or VOXIMPLANT_CREDENTIALS_FILE is required."
+            )
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError(f"Cannot read VOXIMPLANT_CREDENTIALS_FILE: {path}") from exc
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Voximplant credentials are not valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Voximplant credentials JSON must be an object.")
+    return payload
+
+
+def _credential_value(credentials: dict[str, Any], *names: str) -> str:
+    for name in names:
+        value = credentials.get(name)
+        if isinstance(value, str | int) and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _voximplant_post_form(
+    url: str,
+    bearer_token: str,
+    payload: dict[str, str],
+    *,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    request = Request(
+        url,
+        data=urlencode(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {bearer_token}",
+            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+            "User-Agent": "telegram-secretary/0.1",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            raw_response = response.read().decode("utf-8")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Voximplant request failed {exc.code}: {detail[:240]}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Voximplant request failed: {exc.reason}") from exc
+
+    try:
+        parsed = json.loads(raw_response)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Voximplant response is not JSON.") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Voximplant response is not an object.")
+    return parsed
+
+
+def _voximplant_push_session_task(
+    start_response: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    timeout_seconds: float,
+) -> None:
+    access_url = _voximplant_access_url(start_response)
+    if not access_url:
+        raise RuntimeError("Voximplant response has no media session access URL.")
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = Request(
+        access_url,
+        data=data,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": "telegram-secretary/0.1",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            response.read()
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Voximplant session task delivery failed {exc.code}: {detail[:240]}"
+        ) from exc
+    except URLError as exc:
+        raise RuntimeError(f"Voximplant session task delivery failed: {exc.reason}") from exc
+
+
+def _validate_voximplant_response(response: dict[str, Any]) -> None:
+    if response.get("error"):
+        error = response.get("error")
+        message = (
+            response.get("message")
+            or response.get("error_msg")
+            or response.get("description")
+        )
+        raise RuntimeError(f"Voximplant request failed: {error} {message or ''}".strip())
+    result = response.get("result")
+    if result in {1, "1", True}:
+        return
+    if _voximplant_call_id(response):
+        return
+    raise RuntimeError("Voximplant response did not confirm scenario start.")
+
+
+def _voximplant_call_id(response: dict[str, Any]) -> str | None:
+    for key in (
+        "call_session_history_id",
+        "callSessionHistoryId",
+        "media_session_access_secure_url",
+        "mediaSessionAccessSecureUrl",
+        "media_session_access_url",
+        "mediaSessionAccessUrl",
+    ):
+        value = response.get(key)
+        if isinstance(value, str | int) and str(value):
+            return str(value)
+    return None
+
+
+def _voximplant_access_url(response: dict[str, Any]) -> str:
+    for key in (
+        "media_session_access_secure_url",
+        "mediaSessionAccessSecureUrl",
+        "media_session_access_url",
+        "mediaSessionAccessUrl",
+    ):
+        value = response.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def _trim_text(value: str, limit: int) -> str:
+    compact = " ".join(value.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3].rstrip() + "..."
 
 
 def _required_str(value: object, name: str) -> str:

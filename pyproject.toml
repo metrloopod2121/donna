@@ -26,6 +26,9 @@ telegram-user = [
 ]
 voice = [
 ]
+voximplant = [
+  "PyJWT[crypto]>=2.8",
+]
 twilio = [
   "twilio>=9.0",
 ]

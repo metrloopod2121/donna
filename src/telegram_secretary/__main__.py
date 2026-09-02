@@ -74,7 +74,7 @@ def main() -> None:
 
     call_live_test = subparsers.add_parser(
         "call-live-test",
-        help="Place one real phone call, wait for the recording, transcribe and analyze it",
+        help="Place one real phone call via the configured provider",
     )
     call_live_test.add_argument("request", help="Same format as /call")
     call_live_test.add_argument("--wait-seconds", type=int, default=240)
@@ -257,9 +257,25 @@ def run_call_live_test(args: argparse.Namespace) -> None:
             provider_call_id = recording.call_sid
             recording_url = recording.recording_url
             duration_seconds = recording.duration_seconds
+        elif provider_name in {
+            "vox",
+            "voximplant",
+            "voximplant_dialog",
+            "voximplant_dialogue",
+        }:
+            placement = service.place_call(request)
+            print(render_call_placement(request, placement))
+            print(
+                "Диалог и финальный разбор выполняет Voximplant "
+                "scenario через Cloudflare Worker. Если в Worker заданы "
+                "TELEGRAM_BOT_TOKEN и SECRETARY_OWNER_TELEGRAM_ID, "
+                "результат придет в Telegram."
+            )
+            return
         else:
             raise RuntimeError(
-                "Для call-live-test поставь VOICE_BUSINESS_CALL_PROVIDER=exolve "
+                "Для call-live-test поставь "
+                "VOICE_BUSINESS_CALL_PROVIDER=voximplant_dialog "
                 "и VOICE_BUSINESS_CALLS_ENABLED=true."
             )
     except Exception as exc:

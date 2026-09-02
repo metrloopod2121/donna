@@ -7,9 +7,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
+from urllib.parse import parse_qs
 
 from telegram_secretary.adapters.telephony import (
     ExolveBusinessCallProvider,
+    VoximplantDialogueCallProvider,
     build_call_research_service,
     build_twilio_business_call_twiml,
     build_twilio_live_test_twiml,
@@ -178,6 +180,107 @@ class CallResearchTest(TestCase):
         service = build_call_research_service(config)
 
         self.assertIsInstance(service.provider, ExolveBusinessCallProvider)
+
+    def test_factory_uses_voximplant_dialog_provider_when_enabled(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VOICE_BUSINESS_CALLS_ENABLED": "true",
+                "VOICE_BUSINESS_CALL_PROVIDER": "voximplant_dialog",
+                "VOXIMPLANT_CREDENTIALS_JSON": "{}",
+                "VOXIMPLANT_RULE_ID": "12345",
+                "VOXIMPLANT_CALLER_ID": "+79990000000",
+                "LLM_WORKER_URL": "https://secretary-ai.example.workers.dev",
+            },
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        service = build_call_research_service(config)
+
+        self.assertIsInstance(service.provider, VoximplantDialogueCallProvider)
+
+    def test_voximplant_provider_starts_dialogue_scenario(self) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
+            url = getattr(request, "full_url")
+            if url == "https://api.voximplant.com/platform_api/StartScenarios":
+                body = request.data.decode("utf-8")  # type: ignore[attr-defined]
+                form = parse_qs(body)
+                seen["url"] = url
+                seen["authorization"] = request.get_header(  # type: ignore[attr-defined]
+                    "Authorization"
+                )
+                seen["payload"] = {
+                    key: values[-1]
+                    for key, values in form.items()
+                    if values
+                }
+                seen["timeout"] = timeout
+                return _FakeResponse(
+                    b"{"
+                    b'"result":1,'
+                    b'"call_session_history_id":987654,'
+                    b'"media_session_access_secure_url":"https://session.example/request"'
+                    b"}"
+                )
+
+            seen["session_url"] = url
+            seen["session_payload"] = json.loads(
+                request.data.decode("utf-8")  # type: ignore[attr-defined]
+            )
+            return _FakeResponse(b"{}")
+
+        with patch.dict(
+            os.environ,
+            {
+                "VOXIMPLANT_CREDENTIALS_JSON": json.dumps(
+                    {
+                        "account_id": 100500,
+                        "key_id": "key-id",
+                        "private_key": "private-key",
+                    }
+                ),
+                "VOXIMPLANT_RULE_ID": "12345",
+                "VOXIMPLANT_CALLER_ID": "+79990000000",
+                "LLM_WORKER_URL": "https://secretary-ai.example.workers.dev",
+            },
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        with (
+            patch(
+                "telegram_secretary.adapters.telephony._voximplant_management_token",
+                return_value="jwt",
+            ),
+            patch("telegram_secretary.adapters.telephony.urlopen", fake_urlopen),
+        ):
+            placement = VoximplantDialogueCallProvider(config).place_business_call(_request())
+
+        payload = seen["payload"]  # type: ignore[assignment]
+        start_data = json.loads(payload["script_custom_data"])  # type: ignore[index]
+        session_payload = seen["session_payload"]  # type: ignore[assignment]
+
+        self.assertEqual(placement.provider, "voximplant_dialog")
+        self.assertEqual(placement.provider_call_id, "987654")
+        self.assertEqual(seen["authorization"], "Bearer jwt")
+        self.assertEqual(seen["url"], "https://api.voximplant.com/platform_api/StartScenarios")
+        self.assertEqual(payload["rule_id"], "12345")  # type: ignore[index]
+        self.assertEqual(start_data["r"], "call_test")
+        self.assertEqual(start_data["u"], "https://secretary-ai.example.workers.dev")
+        self.assertEqual(seen["session_url"], "https://session.example/request")
+        self.assertEqual(session_payload["destination"], "+79991234567")  # type: ignore[index]
+        self.assertEqual(session_payload["callerId"], "+79990000000")  # type: ignore[index]
+        self.assertEqual(
+            session_payload["workerUrl"],  # type: ignore[index]
+            "https://secretary-ai.example.workers.dev",
+        )
+        self.assertEqual(
+            session_payload["questions"],  # type: ignore[index]
+            ["стоимость"],
+        )
 
     def test_exolve_provider_posts_make_voice_message(self) -> None:
         seen: dict[str, object] = {}

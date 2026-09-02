@@ -250,6 +250,19 @@ def _missing_required_live_settings(config: AppConfig) -> list[str]:
     }:
         required["EXOLVE_API_KEY"] = config.exolve_api_key
         required["EXOLVE_SOURCE_PHONE"] = config.exolve_source_phone
+    if config.voice_business_calls_enabled and provider_name in {
+        "vox",
+        "voximplant",
+        "voximplant_dialog",
+        "voximplant_dialogue",
+    }:
+        required["VOXIMPLANT_RULE_ID"] = config.voximplant_rule_id
+        required["VOXIMPLANT_CALLER_ID"] = config.voximplant_caller_id
+        required["VOXIMPLANT_WORKER_URL or LLM_WORKER_URL"] = config.voximplant_worker_url
+        required["VOXIMPLANT_CREDENTIALS_JSON or VOXIMPLANT_CREDENTIALS_FILE"] = (
+            config.voximplant_credentials_json
+            or ("file" if config.voximplant_credentials_file.is_file() else "")
+        )
     if config.call_analysis_provider == "cloudflare_worker":
         required["LLM_WORKER_URL"] = config.llm_worker_url
         required["LLM_WORKER_BEARER_TOKEN"] = config.llm_worker_bearer_token

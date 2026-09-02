@@ -75,6 +75,17 @@ class AppConfig:
     exolve_tts_emotion: int
     exolve_tts_volume: int
     exolve_tts_speed: float
+    voximplant_credentials_json: str = field(repr=False)
+    voximplant_credentials_file: Path
+    voximplant_rule_id: str
+    voximplant_application_id: str
+    voximplant_application_name: str
+    voximplant_caller_id: str
+    voximplant_worker_url: str
+    voximplant_worker_secret_name: str
+    voximplant_max_turns: int
+    voximplant_asr_language: str
+    voximplant_voice: str
     call_analysis_provider: str
     llm_worker_url: str
     llm_worker_bearer_token: str = field(repr=False)
@@ -165,6 +176,34 @@ class AppConfig:
             exolve_tts_emotion=int(os.getenv("EXOLVE_TTS_EMOTION", "1")),
             exolve_tts_volume=int(os.getenv("EXOLVE_TTS_VOLUME", "-19")),
             exolve_tts_speed=float(os.getenv("EXOLVE_TTS_SPEED", "1.05")),
+            voximplant_credentials_json=os.getenv("VOXIMPLANT_CREDENTIALS_JSON", ""),
+            voximplant_credentials_file=Path(
+                os.getenv(
+                    "VOXIMPLANT_CREDENTIALS_FILE",
+                    "/etc/telegram-secretary/voximplant-credentials.json",
+                )
+            ),
+            voximplant_rule_id=os.getenv("VOXIMPLANT_RULE_ID", ""),
+            voximplant_application_id=os.getenv("VOXIMPLANT_APPLICATION_ID", ""),
+            voximplant_application_name=os.getenv("VOXIMPLANT_APPLICATION_NAME", ""),
+            voximplant_caller_id=os.getenv("VOXIMPLANT_CALLER_ID", ""),
+            voximplant_worker_url=os.getenv(
+                "VOXIMPLANT_WORKER_URL",
+                os.getenv("LLM_WORKER_URL", ""),
+            ),
+            voximplant_worker_secret_name=os.getenv(
+                "VOXIMPLANT_WORKER_SECRET_NAME",
+                "SECRETARY_AI_TOKEN",
+            ),
+            voximplant_max_turns=int(os.getenv("VOXIMPLANT_MAX_TURNS", "8")),
+            voximplant_asr_language=os.getenv(
+                "VOXIMPLANT_ASR_LANGUAGE",
+                "ASRLanguage.RUSSIAN_RU",
+            ),
+            voximplant_voice=os.getenv(
+                "VOXIMPLANT_VOICE",
+                "VoiceList.Yandex.ru_RU_oksana",
+            ),
             call_analysis_provider=os.getenv("CALL_ANALYSIS_PROVIDER", "rule_based"),
             llm_worker_url=os.getenv("LLM_WORKER_URL", ""),
             llm_worker_bearer_token=os.getenv("LLM_WORKER_BEARER_TOKEN", ""),

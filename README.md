@@ -75,12 +75,15 @@ Craft, заметки и задачи:
 
 Голос:
 
-- Telegram Bot API не поддерживает телефонные звонки боту. Для настоящих звонков нужен внешний voice/SIP-провайдер. Для РФ-проверки используется MTS Exolve; Twilio оставлен только как старый опциональный адаптер.
+- Telegram Bot API не поддерживает телефонные звонки боту. Для настоящих звонков нужен внешний voice/SIP-провайдер. Основной путь для живого диалога по РФ-номерам: Voximplant; MTS Exolve оставлен как старый one-shot fallback, Twilio оставлен только как старый опциональный адаптер.
 - `VOICE_PROVIDER` выбирает провайдера, `VOICE_OWNER_PHONE_E164` задает номер владельца, `VOICE_OUTBOUND_ENABLED` включает исходящие звонки.
 - Входящий звонок: STT -> интент -> ответ о ближайших делах/задачах -> TTS.
 - Исходящий звонок: только владельцу, только по правилам `CALL_REMINDER_*`, с quiet hours и rate limit.
-- Business research-звонок: owner-only команда `/call +79991234567 | Теннисный клуб | узнать абонементы; какие дни свободны` создает запрос, строит сценарий, просит собеседника ответить после сигнала, сохраняет запись/транскрипт и запускает post-processing.
-- `VOICE_BUSINESS_CALL_PROVIDER=dry_run` не звонит, а показывает сценарий. Для РФ-провайдера поставь `VOICE_BUSINESS_CALL_PROVIDER=exolve`, `VOICE_BUSINESS_CALLS_ENABLED=true`, `EXOLVE_API_KEY` и `EXOLVE_SOURCE_PHONE`.
+- Business research-звонок: owner-only команда `/call +79991234567 | Теннисный клуб | узнать абонементы; какие дни свободны` создает запрос и запускает провайдера звонка.
+- `VOICE_BUSINESS_CALL_PROVIDER=voximplant_dialog` запускает живой диалог: Voximplant звонит, слушает через ASR, спрашивает следующие вопросы через `secretary-ai` Worker и после разговора отправляет финальный разбор в Telegram, если в Worker заданы `TELEGRAM_BOT_TOKEN` и `SECRETARY_OWNER_TELEGRAM_ID`.
+- Сценарий для Voximplant лежит в `providers/voximplant/secretary_dialogue_scenario.js`; его нужно вставить в Application -> Scenarios и привязать к routing rule. В Voximplant Secrets нужно добавить `SECRETARY_AI_TOKEN` со значением `LLM_WORKER_BEARER_TOKEN`.
+- Для запуска из Python нужны `VOICE_BUSINESS_CALLS_ENABLED=true`, `VOICE_BUSINESS_CALL_PROVIDER=voximplant_dialog`, `VOXIMPLANT_RULE_ID`, `VOXIMPLANT_CALLER_ID`, `VOXIMPLANT_CREDENTIALS_FILE=/etc/telegram-secretary/voximplant-credentials.json`, `LLM_WORKER_URL`.
+- Старый Exolve fallback: `VOICE_BUSINESS_CALL_PROVIDER=exolve`, `EXOLVE_API_KEY` и `EXOLVE_SOURCE_PHONE`. Это не живой диалог, а voice-message + запись/разбор.
 - Для первой настоящей проверки без публичного webhook есть CLI `call-live-test`: он звонит через выбранного провайдера, ждёт завершения, скачивает запись или берет транскрипт провайдера, отправляет аудио в Cloudflare Whisper и затем разбирает транскрипт.
 - Для русского языка встроенная транскрибация провайдера не считается обязательной: сервис принимает готовый transcript callback или может скачать recording URL и отправить запись в `VOICE_RECORDING_TRANSCRIBER=cloudflare_whisper`.
 
@@ -188,5 +191,5 @@ python -m unittest discover -s tests
 PYTHONPATH=src python -m telegram_secretary simulate --sender-id 42 --text "Ты свободен завтра днем?"
 PYTHONPATH=src python -m telegram_secretary call-dry-run "+79991234567 | Теннисный клуб | узнать стоимость абонемента; какие дни свободны"
 PYTHONPATH=src python -m telegram_secretary call-analyze "+79991234567 | Ресторан | есть ли стол на 20:00" --transcript "Стол на 20:00 можно забронировать, депозит не нужен."
-VOICE_BUSINESS_CALLS_ENABLED=true VOICE_BUSINESS_CALL_PROVIDER=exolve PYTHONPATH=src python -m telegram_secretary call-live-test "+79991234567 | Тест | что я сказал после сигнала"
+VOICE_BUSINESS_CALLS_ENABLED=true VOICE_BUSINESS_CALL_PROVIDER=voximplant_dialog PYTHONPATH=src python -m telegram_secretary call-live-test "+79991234567 | Тест | спроси, что я сказал"
 ```

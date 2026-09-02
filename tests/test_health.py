@@ -100,3 +100,31 @@ class HealthPayloadTest(TestCase):
         self.assertEqual(status, 503)
         self.assertIn("EXOLVE_API_KEY", payload["missing_live_settings"])
         self.assertIn("EXOLVE_SOURCE_PHONE", payload["missing_live_settings"])
+
+    def test_readiness_requires_voximplant_settings_when_dialogue_enabled(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "SECRETARY_RUNTIME_MODE": "telegram_polling",
+                "TELEGRAM_BOT_DELIVERY_MODE": "polling",
+                "TELEGRAM_BOT_TOKEN": "token",
+                "SECRETARY_OWNER_TELEGRAM_ID": "123",
+                "VOICE_BUSINESS_CALLS_ENABLED": "true",
+                "VOICE_BUSINESS_CALL_PROVIDER": "voximplant_dialog",
+            },
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        status, payload = readiness_payload(
+            config,
+            polling_status={"enabled": True, "running": True, "bot_ok": True},
+        )
+
+        self.assertEqual(status, 503)
+        self.assertIn("VOXIMPLANT_RULE_ID", payload["missing_live_settings"])
+        self.assertIn("VOXIMPLANT_CALLER_ID", payload["missing_live_settings"])
+        self.assertIn(
+            "VOXIMPLANT_CREDENTIALS_JSON or VOXIMPLANT_CREDENTIALS_FILE",
+            payload["missing_live_settings"],
+        )

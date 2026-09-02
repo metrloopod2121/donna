@@ -341,6 +341,7 @@ def _safe_call_error(exc: Exception, config: AppConfig) -> str:
         config.llm_worker_bearer_token,
         config.cloudflare_api_token,
         config.exolve_api_key,
+        config.voximplant_credentials_json,
     ):
         if secret:
             text = text.replace(secret, "<secret>")

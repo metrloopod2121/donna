@@ -74,7 +74,17 @@ function createOutboundCall() {
   const transport = callTransport();
   if (transport === "sip") {
     Logger.write(`Starting secretary SIP dialogue call ${task.requestId || ""} to ${task.sipUri}`);
-    return VoxEngine.callSIP(task.sipUri, sipCallParameters());
+    const parameters = sipCallParameters();
+    return VoxEngine.callSIP(
+      task.sipUri,
+      parameters.callerid,
+      parameters.displayName,
+      parameters.password,
+      parameters.authUser,
+      parameters.extraHeaders,
+      parameters.video,
+      parameters.outProxy,
+    );
   }
   Logger.write(`Starting secretary PSTN dialogue call ${task.requestId || ""} to ${task.destination}`);
   return VoxEngine.callPSTN(task.destination, task.callerId);
@@ -363,19 +373,18 @@ function callTransport() {
 }
 
 function sipCallParameters() {
-  const parameters = {};
+  const parameters = {
+    callerid: task.sipCallerId || task.callerId || "",
+    displayName: task.sipDisplayName || "",
+    password: "",
+    authUser: "",
+    extraHeaders: {},
+    video: false,
+    outProxy: "",
+  };
   const callerId = task.sipCallerId || task.callerId || "";
   if (callerId) {
     parameters.callerid = callerId;
-  }
-  if (task.sipDisplayName) {
-    parameters.displayName = String(task.sipDisplayName);
-  }
-  if (task.sipRegId) {
-    const regId = parseInt(task.sipRegId, 10);
-    if (Number.isFinite(regId)) {
-      parameters.regId = regId;
-    }
   }
   if (task.sipAuthUser) {
     parameters.authUser = String(task.sipAuthUser);

@@ -81,6 +81,14 @@ class AppConfig:
     voximplant_application_id: str
     voximplant_application_name: str
     voximplant_caller_id: str
+    voximplant_outbound_transport: str
+    voximplant_sip_uri_template: str
+    voximplant_sip_reg_id: str
+    voximplant_sip_auth_user: str
+    voximplant_sip_password_secret_name: str
+    voximplant_sip_outbound_proxy: str
+    voximplant_sip_caller_id: str
+    voximplant_sip_display_name: str
     voximplant_worker_url: str
     voximplant_worker_secret_name: str
     voximplant_max_turns: int
@@ -187,6 +195,17 @@ class AppConfig:
             voximplant_application_id=os.getenv("VOXIMPLANT_APPLICATION_ID", ""),
             voximplant_application_name=os.getenv("VOXIMPLANT_APPLICATION_NAME", ""),
             voximplant_caller_id=os.getenv("VOXIMPLANT_CALLER_ID", ""),
+            voximplant_outbound_transport=os.getenv("VOXIMPLANT_OUTBOUND_TRANSPORT", "pstn"),
+            voximplant_sip_uri_template=os.getenv("VOXIMPLANT_SIP_URI_TEMPLATE", ""),
+            voximplant_sip_reg_id=os.getenv("VOXIMPLANT_SIP_REG_ID", ""),
+            voximplant_sip_auth_user=os.getenv("VOXIMPLANT_SIP_AUTH_USER", ""),
+            voximplant_sip_password_secret_name=os.getenv(
+                "VOXIMPLANT_SIP_PASSWORD_SECRET_NAME",
+                "",
+            ),
+            voximplant_sip_outbound_proxy=os.getenv("VOXIMPLANT_SIP_OUTBOUND_PROXY", ""),
+            voximplant_sip_caller_id=os.getenv("VOXIMPLANT_SIP_CALLER_ID", ""),
+            voximplant_sip_display_name=os.getenv("VOXIMPLANT_SIP_DISPLAY_NAME", ""),
             voximplant_worker_url=os.getenv(
                 "VOXIMPLANT_WORKER_URL",
                 os.getenv("LLM_WORKER_URL", ""),

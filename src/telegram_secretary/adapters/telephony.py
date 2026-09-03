@@ -201,8 +201,11 @@ class VoximplantDialogueCallProvider:
             missing.append("VOXIMPLANT_CREDENTIALS_JSON or VOXIMPLANT_CREDENTIALS_FILE")
         if not self.config.voximplant_rule_id:
             missing.append("VOXIMPLANT_RULE_ID")
-        if not self.config.voximplant_caller_id:
+        transport = _voximplant_outbound_transport(self.config)
+        if transport == "pstn" and not self.config.voximplant_caller_id:
             missing.append("VOXIMPLANT_CALLER_ID")
+        if transport == "sip" and not self.config.voximplant_sip_uri_template:
+            missing.append("VOXIMPLANT_SIP_URI_TEMPLATE")
         if not self.config.voximplant_worker_url:
             missing.append("VOXIMPLANT_WORKER_URL or LLM_WORKER_URL")
         if missing:
@@ -595,11 +598,13 @@ def _voximplant_script_custom_data(
     request: BusinessCallRequest,
     config: AppConfig,
 ) -> dict[str, Any]:
-    return {
+    destination = normalize_phone_e164(request.phone_e164)
+    transport = _voximplant_outbound_transport(config)
+    payload: dict[str, Any] = {
         "requestId": request.request_id,
         "targetName": _trim_text(request.target_name, 160),
-        "destination": normalize_phone_e164(request.phone_e164),
-        "callerId": normalize_phone_e164(config.voximplant_caller_id),
+        "destination": destination,
+        "transport": transport,
         "goal": _trim_text(request.goal, 600),
         "questions": [_trim_text(question, 260) for question in request.questions[:12]],
         "language": request.language or "ru",
@@ -611,6 +616,27 @@ def _voximplant_script_custom_data(
         "asrLanguage": config.voximplant_asr_language or "ASRLanguage.RUSSIAN_RU",
         "voice": config.voximplant_voice or "VoiceList.Yandex.ru_RU_oksana",
     }
+    if transport == "pstn":
+        payload["callerId"] = normalize_phone_e164(config.voximplant_caller_id)
+    else:
+        caller_id = _optional_normalized_phone(
+            config.voximplant_sip_caller_id or config.voximplant_caller_id
+        )
+        payload["sipUri"] = _voximplant_sip_uri(destination, config)
+        if caller_id:
+            payload["callerId"] = caller_id
+            payload["sipCallerId"] = caller_id
+        if config.voximplant_sip_reg_id.strip():
+            payload["sipRegId"] = config.voximplant_sip_reg_id.strip()
+        if config.voximplant_sip_auth_user.strip():
+            payload["sipAuthUser"] = config.voximplant_sip_auth_user.strip()
+        if config.voximplant_sip_password_secret_name.strip():
+            payload["sipPasswordSecretName"] = config.voximplant_sip_password_secret_name.strip()
+        if config.voximplant_sip_outbound_proxy.strip():
+            payload["sipOutboundProxy"] = config.voximplant_sip_outbound_proxy.strip()
+        if config.voximplant_sip_display_name.strip():
+            payload["sipDisplayName"] = config.voximplant_sip_display_name.strip()
+    return payload
 
 
 def _voximplant_start_custom_data(
@@ -621,7 +647,48 @@ def _voximplant_start_custom_data(
         "r": request.request_id,
         "u": config.voximplant_worker_url.rstrip("/"),
         "s": config.voximplant_worker_secret_name or "SECRETARY_AI_TOKEN",
+        "t": _voximplant_outbound_transport(config),
     }
+
+
+def _voximplant_outbound_transport(config: AppConfig) -> str:
+    value = config.voximplant_outbound_transport.strip().casefold()
+    if value in {"pstn", "voximplant_pstn", "callpstn"}:
+        return "pstn"
+    if value in {"sip", "sip_uri", "sip_direct", "callsip"}:
+        return "sip"
+    raise RuntimeError(
+        "VOXIMPLANT_OUTBOUND_TRANSPORT must be either 'pstn' or 'sip'."
+    )
+
+
+def _voximplant_sip_uri(destination_e164: str, config: AppConfig) -> str:
+    digits = destination_e164.lstrip("+")
+    local = digits[1:] if digits.startswith("7") and len(digits) == 11 else digits
+    trunk8 = f"8{local}" if digits.startswith("7") and len(digits) == 11 else digits
+    try:
+        uri = config.voximplant_sip_uri_template.format(
+            destination=destination_e164,
+            destination_digits=digits,
+            destination_local=local,
+            destination_trunk8=trunk8,
+        )
+    except KeyError as exc:
+        raise RuntimeError(f"Unknown VOXIMPLANT_SIP_URI_TEMPLATE placeholder: {exc}.") from exc
+    uri = uri.strip()
+    if not uri:
+        raise RuntimeError("VOXIMPLANT_SIP_URI_TEMPLATE rendered an empty SIP URI.")
+    if any(char.isspace() for char in uri):
+        raise RuntimeError("VOXIMPLANT_SIP_URI_TEMPLATE rendered SIP URI with whitespace.")
+    if "@" in uri and not uri.startswith(("sip:", "sips:")):
+        return f"sip:{uri}"
+    return uri
+
+
+def _optional_normalized_phone(raw_phone: str) -> str:
+    if not raw_phone.strip():
+        return ""
+    return normalize_phone_e164(raw_phone)
 
 
 def _voximplant_management_token(config: AppConfig) -> str:

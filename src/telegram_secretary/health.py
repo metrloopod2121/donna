@@ -257,7 +257,13 @@ def _missing_required_live_settings(config: AppConfig) -> list[str]:
         "voximplant_dialogue",
     }:
         required["VOXIMPLANT_RULE_ID"] = config.voximplant_rule_id
-        required["VOXIMPLANT_CALLER_ID"] = config.voximplant_caller_id
+        transport = config.voximplant_outbound_transport.strip().casefold()
+        if transport in {"sip", "sip_uri", "sip_direct", "callsip"}:
+            required["VOXIMPLANT_SIP_URI_TEMPLATE"] = config.voximplant_sip_uri_template
+        elif transport in {"pstn", "voximplant_pstn", "callpstn"}:
+            required["VOXIMPLANT_CALLER_ID"] = config.voximplant_caller_id
+        else:
+            required["VOXIMPLANT_OUTBOUND_TRANSPORT=pstn or sip"] = ""
         required["VOXIMPLANT_WORKER_URL or LLM_WORKER_URL"] = config.voximplant_worker_url
         required["VOXIMPLANT_CREDENTIALS_JSON or VOXIMPLANT_CREDENTIALS_FILE"] = (
             config.voximplant_credentials_json

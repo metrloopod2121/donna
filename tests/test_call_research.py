@@ -282,6 +282,91 @@ class CallResearchTest(TestCase):
             ["стоимость"],
         )
 
+    def test_voximplant_provider_starts_dialogue_scenario_via_sip(self) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
+            url = getattr(request, "full_url")
+            if url == "https://api.voximplant.com/platform_api/StartScenarios":
+                body = request.data.decode("utf-8")  # type: ignore[attr-defined]
+                form = parse_qs(body)
+                seen["payload"] = {
+                    key: values[-1]
+                    for key, values in form.items()
+                    if values
+                }
+                return _FakeResponse(
+                    b"{"
+                    b'"result":1,'
+                    b'"call_session_history_id":987654,'
+                    b'"media_session_access_secure_url":"https://session.example/request"'
+                    b"}"
+                )
+
+            seen["session_payload"] = json.loads(
+                request.data.decode("utf-8")  # type: ignore[attr-defined]
+            )
+            seen["timeout"] = timeout
+            return _FakeResponse(b"{}")
+
+        with patch.dict(
+            os.environ,
+            {
+                "VOXIMPLANT_CREDENTIALS_JSON": json.dumps(
+                    {
+                        "account_id": 100500,
+                        "key_id": "key-id",
+                        "private_key": "private-key",
+                    }
+                ),
+                "VOXIMPLANT_RULE_ID": "12345",
+                "VOXIMPLANT_OUTBOUND_TRANSPORT": "sip",
+                "VOXIMPLANT_SIP_URI_TEMPLATE": (
+                    "sip:{destination_digits}@sip.provider.example"
+                ),
+                "VOXIMPLANT_SIP_AUTH_USER": "sip-login",
+                "VOXIMPLANT_SIP_PASSWORD_SECRET_NAME": "SIP_PASSWORD",
+                "VOXIMPLANT_SIP_OUTBOUND_PROXY": "sip.provider.example",
+                "VOXIMPLANT_SIP_CALLER_ID": "+74951234567",
+                "VOXIMPLANT_SIP_DISPLAY_NAME": "Donna",
+                "LLM_WORKER_URL": "https://secretary-ai.example.workers.dev",
+            },
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        with (
+            patch(
+                "telegram_secretary.adapters.telephony._voximplant_management_token",
+                return_value="jwt",
+            ),
+            patch("telegram_secretary.adapters.telephony.urlopen", fake_urlopen),
+        ):
+            placement = VoximplantDialogueCallProvider(config).place_business_call(_request())
+
+        payload = seen["payload"]  # type: ignore[assignment]
+        start_data = json.loads(payload["script_custom_data"])  # type: ignore[index]
+        session_payload = seen["session_payload"]  # type: ignore[assignment]
+
+        self.assertEqual(placement.provider, "voximplant_dialog")
+        self.assertEqual(start_data["t"], "sip")
+        self.assertEqual(session_payload["transport"], "sip")  # type: ignore[index]
+        self.assertEqual(  # type: ignore[index]
+            session_payload["sipUri"],
+            "sip:79991234567@sip.provider.example",
+        )
+        self.assertEqual(session_payload["sipAuthUser"], "sip-login")  # type: ignore[index]
+        self.assertEqual(
+            session_payload["sipPasswordSecretName"],  # type: ignore[index]
+            "SIP_PASSWORD",
+        )
+        self.assertEqual(
+            session_payload["sipOutboundProxy"],  # type: ignore[index]
+            "sip.provider.example",
+        )
+        self.assertEqual(session_payload["sipCallerId"], "+74951234567")  # type: ignore[index]
+        self.assertEqual(session_payload["sipDisplayName"], "Donna")  # type: ignore[index]
+
     def test_exolve_provider_posts_make_voice_message(self) -> None:
         seen: dict[str, object] = {}
 

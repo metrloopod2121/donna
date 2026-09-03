@@ -41,7 +41,7 @@ VoxEngine.addEventListener(AppEvents.Started, () => {
     return;
   }
 
-  if (task.destination && task.callerId && task.workerUrl) {
+  if (task.workerUrl && hasDialTarget()) {
     startOutboundCall();
   } else {
     startWaitTimer = setTimeout(() => failFast("session_task_timeout"), 30000);
@@ -52,13 +52,12 @@ function startOutboundCall() {
   if (call) {
     return;
   }
-  if (!task.destination || !task.callerId || !task.workerUrl) {
-    failFast("missing_destination_caller_or_worker");
+  if (!task.workerUrl || !hasDialTarget()) {
+    failFast("missing_worker_or_dial_target");
     return;
   }
   clearTimer("startWait");
-  Logger.write(`Starting secretary dialogue call ${task.requestId || ""} to ${task.destination}`);
-  call = VoxEngine.callPSTN(task.destination, task.callerId);
+  call = createOutboundCall();
   call.addEventListener(CallEvents.Connected, onConnected);
   call.addEventListener(CallEvents.Failed, () => finalizeAndTerminate("call_failed"));
   call.addEventListener(CallEvents.Disconnected, () => finalizeAndTerminate("call_disconnected"));
@@ -69,6 +68,16 @@ function startOutboundCall() {
   call.addEventListener(CallEvents.RecordStopped, (event) => {
     recordingUrl = event.url || recordingUrl;
   });
+}
+
+function createOutboundCall() {
+  const transport = callTransport();
+  if (transport === "sip") {
+    Logger.write(`Starting secretary SIP dialogue call ${task.requestId || ""} to ${task.sipUri}`);
+    return VoxEngine.callSIP(task.sipUri, sipCallParameters());
+  }
+  Logger.write(`Starting secretary PSTN dialogue call ${task.requestId || ""} to ${task.destination}`);
+  return VoxEngine.callPSTN(task.destination, task.callerId);
 }
 
 function onConnected() {
@@ -247,6 +256,8 @@ function finalPayload(reason) {
   payload.recordingUrl = recordingUrl;
   payload.destination = task.destination || "";
   payload.callerId = task.callerId || "";
+  payload.transport = callTransport();
+  payload.sipUri = task.sipUri || "";
   payload.ownerTelegramChatId = task.ownerTelegramChatId || "";
   return payload;
 }
@@ -335,7 +346,50 @@ function normalizeTask(value) {
   normalized.requestId = normalized.requestId || normalized.r || "";
   normalized.workerUrl = normalized.workerUrl || normalized.u || "";
   normalized.workerSecretName = normalized.workerSecretName || normalized.s || DEFAULT_WORKER_SECRET;
+  normalized.transport = normalized.transport || normalized.t || "pstn";
   return normalized;
+}
+
+function hasDialTarget() {
+  if (callTransport() === "sip") {
+    return Boolean(task.sipUri);
+  }
+  return Boolean(task.destination && task.callerId);
+}
+
+function callTransport() {
+  const value = String(task.transport || "pstn").toLowerCase();
+  return value === "sip" ? "sip" : "pstn";
+}
+
+function sipCallParameters() {
+  const parameters = {};
+  const callerId = task.sipCallerId || task.callerId || "";
+  if (callerId) {
+    parameters.callerid = callerId;
+  }
+  if (task.sipDisplayName) {
+    parameters.displayName = String(task.sipDisplayName);
+  }
+  if (task.sipRegId) {
+    const regId = parseInt(task.sipRegId, 10);
+    if (Number.isFinite(regId)) {
+      parameters.regId = regId;
+    }
+  }
+  if (task.sipAuthUser) {
+    parameters.authUser = String(task.sipAuthUser);
+  }
+  if (task.sipPasswordSecretName) {
+    const password = VoxEngine.getSecretValue(String(task.sipPasswordSecretName));
+    if (password) {
+      parameters.password = password;
+    }
+  }
+  if (task.sipOutboundProxy) {
+    parameters.outProxy = String(task.sipOutboundProxy);
+  }
+  return parameters;
 }
 
 function maxTurns() {

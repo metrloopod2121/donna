@@ -710,11 +710,8 @@ def _voximplant_management_token(config: AppConfig) -> str:
         ) from exc
 
     now = int(time.time())
-    issuer: str | int = account_id
-    if str(account_id).isdigit():
-        issuer = int(str(account_id))
     token = jwt.encode(
-        {"iat": now, "iss": issuer, "exp": now + 3600},
+        {"iat": now, "iss": str(account_id), "exp": now + 3600},
         private_key,
         algorithm="RS256",
         headers={"kid": key_id, "typ": "JWT"},

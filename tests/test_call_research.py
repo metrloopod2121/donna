@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 from urllib.parse import parse_qs
@@ -16,6 +18,7 @@ from telegram_secretary.adapters.telephony import (
     build_twilio_business_call_twiml,
     build_twilio_live_test_twiml,
     _exolve_transcription_text,
+    _voximplant_management_token,
 )
 from telegram_secretary.call_research import (
     BusinessCallRequest,
@@ -366,6 +369,46 @@ class CallResearchTest(TestCase):
         )
         self.assertEqual(session_payload["sipCallerId"], "+74951234567")  # type: ignore[index]
         self.assertEqual(session_payload["sipDisplayName"], "Donna")  # type: ignore[index]
+
+    def test_voximplant_management_token_uses_string_issuer(self) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_encode(
+            payload: dict[str, object],
+            private_key: str,
+            *,
+            algorithm: str,
+            headers: dict[str, str],
+        ) -> str:
+            seen["payload"] = payload
+            seen["private_key"] = private_key
+            seen["algorithm"] = algorithm
+            seen["headers"] = headers
+            return "jwt-token"
+
+        with patch.dict(
+            os.environ,
+            {
+                "VOXIMPLANT_CREDENTIALS_JSON": json.dumps(
+                    {
+                        "account_id": 100500,
+                        "key_id": "key-id",
+                        "private_key": "private-key",
+                    }
+                ),
+            },
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        with patch.dict(sys.modules, {"jwt": SimpleNamespace(encode=fake_encode)}):
+            token = _voximplant_management_token(config)
+
+        payload = seen["payload"]  # type: ignore[assignment]
+        self.assertEqual(token, "jwt-token")
+        self.assertEqual(payload["iss"], "100500")  # type: ignore[index]
+        self.assertIsInstance(payload["iss"], str)  # type: ignore[index]
+        self.assertEqual(seen["algorithm"], "RS256")
 
     def test_exolve_provider_posts_make_voice_message(self) -> None:
         seen: dict[str, object] = {}

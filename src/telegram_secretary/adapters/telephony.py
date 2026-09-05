@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import socket
 import time
 from dataclasses import dataclass
 from html import escape
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -150,6 +152,65 @@ class ExolveBusinessCallProvider:
             missing.append("EXOLVE_SOURCE_PHONE")
         if missing:
             raise RuntimeError("Missing Exolve business call settings: " + ", ".join(missing))
+
+        prefixes = self.config.voice_business_call_allowed_prefixes
+        if prefixes and not any(phone_e164.startswith(prefix) for prefix in prefixes):
+            allowed = ", ".join(sorted(prefixes))
+            raise RuntimeError(f"Business calls are allowed only for prefixes: {allowed}")
+
+
+class AsteriskBusinessCallProvider:
+    """Originate a live dialogue call through local Asterisk and a SIP trunk."""
+
+    def __init__(self, config: AppConfig) -> None:
+        self.config = config
+
+    def place_business_call(self, request: BusinessCallRequest) -> BusinessCallPlacement:
+        self._validate_configured(request.phone_e164)
+        task_path = _asterisk_write_task(request, self.config)
+        action_id = request.request_id
+        channel = (
+            f"PJSIP/{_asterisk_destination_digits(request.phone_e164)}"
+            f"@{self.config.asterisk_originate_endpoint}"
+        )
+        response = _asterisk_originate(
+            self.config,
+            channel=channel,
+            action_id=action_id,
+            variables={
+                "SECRETARY_TASK_PATH": str(task_path),
+                "SECRETARY_REQUEST_ID": request.request_id,
+            },
+        )
+        return BusinessCallPlacement(
+            request_id=request.request_id,
+            provider="asterisk",
+            status=BusinessCallStatus.QUEUED,
+            provider_call_id=action_id,
+            message=(
+                "Asterisk accepted outbound SIP call."
+                f" AMI response: {response.get('Message', 'queued')}"
+            ),
+        )
+
+    def _validate_configured(self, phone_e164: str) -> None:
+        missing = []
+        if not self.config.asterisk_ami_host:
+            missing.append("ASTERISK_AMI_HOST")
+        if not self.config.asterisk_ami_username:
+            missing.append("ASTERISK_AMI_USERNAME")
+        if not self.config.asterisk_ami_password:
+            missing.append("ASTERISK_AMI_PASSWORD")
+        if not self.config.asterisk_originate_endpoint:
+            missing.append("ASTERISK_ORIGINATE_ENDPOINT")
+        if not self.config.asterisk_originate_context:
+            missing.append("ASTERISK_ORIGINATE_CONTEXT")
+        if not self.config.llm_worker_url:
+            missing.append("LLM_WORKER_URL")
+        if not self.config.llm_worker_bearer_token:
+            missing.append("LLM_WORKER_BEARER_TOKEN")
+        if missing:
+            raise RuntimeError("Missing Asterisk business call settings: " + ", ".join(missing))
 
         prefixes = self.config.voice_business_call_allowed_prefixes
         if prefixes and not any(phone_e164.startswith(prefix) for prefix in prefixes):
@@ -381,6 +442,12 @@ def build_call_research_service(
     if config.voice_business_calls_enabled and provider_name in {"exolve", "mts_exolve"}:
         provider = ExolveBusinessCallProvider(config)
     if config.voice_business_calls_enabled and provider_name in {
+        "asterisk",
+        "sipnet",
+        "asterisk_sip",
+    }:
+        provider = AsteriskBusinessCallProvider(config)
+    if config.voice_business_calls_enabled and provider_name in {
         "vox",
         "voximplant",
         "voximplant_dialog",
@@ -592,6 +659,143 @@ def _exolve_channel_role(channel_tag: object) -> str:
 def _exolve_transcription_missing(exc: RuntimeError) -> bool:
     text = str(exc).casefold()
     return "404" in text or "not found transcribation" in text or "not found transcription" in text
+
+
+def _asterisk_write_task(request: BusinessCallRequest, config: AppConfig) -> Path:
+    task_dir = config.asterisk_task_dir
+    host_task_dir = config.asterisk_host_task_dir
+    task_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{request.request_id}.json"
+    task_path = task_dir / filename
+    host_task_path = host_task_dir / filename
+    payload = {
+        "requestId": request.request_id,
+        "targetName": _trim_text(request.target_name, 160),
+        "destination": normalize_phone_e164(request.phone_e164),
+        "destinationDigits": _asterisk_destination_digits(request.phone_e164),
+        "goal": _trim_text(request.goal, 600),
+        "questions": [_trim_text(question, 260) for question in request.questions[:12]],
+        "language": request.language or "ru",
+        "workerUrl": config.llm_worker_url.rstrip("/"),
+        "ownerTelegramChatId": config.secretary_owner_telegram_id,
+        "maxTurns": max(1, min(config.voximplant_max_turns, 20)),
+        "maxDurationSeconds": max(60, min(request.max_duration_seconds, 1800)),
+    }
+    temp_path = task_path.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temp_path.chmod(0o640)
+    temp_path.replace(task_path)
+    return host_task_path
+
+
+def _asterisk_destination_digits(phone_e164: str) -> str:
+    return normalize_phone_e164(phone_e164).lstrip("+")
+
+
+def _asterisk_originate(
+    config: AppConfig,
+    *,
+    channel: str,
+    action_id: str,
+    variables: dict[str, str],
+) -> dict[str, str]:
+    with socket.create_connection(
+        (config.asterisk_ami_host, config.asterisk_ami_port),
+        timeout=10.0,
+    ) as sock:
+        sock.settimeout(10.0)
+        _asterisk_read_banner(sock)
+        login = _asterisk_send_action(
+            sock,
+            [
+                ("Action", "Login"),
+                ("Username", config.asterisk_ami_username),
+                ("Secret", config.asterisk_ami_password),
+                ("Events", "off"),
+            ],
+        )
+        _asterisk_require_success(login, "Asterisk AMI login")
+
+        fields: list[tuple[str, str]] = [
+            ("Action", "Originate"),
+            ("ActionID", action_id),
+            ("Channel", channel),
+            ("Context", config.asterisk_originate_context),
+            ("Exten", config.asterisk_originate_extension),
+            ("Priority", "1"),
+            ("CallerID", config.asterisk_caller_id),
+            ("Timeout", "45000"),
+            ("Async", "true"),
+        ]
+        for name, value in variables.items():
+            fields.append(("Variable", f"{name}={value}"))
+        response = _asterisk_send_action(sock, fields, action_id=action_id)
+        _asterisk_require_success(response, "Asterisk originate")
+        _asterisk_send_action(sock, [("Action", "Logoff")], require_response=False)
+        return response
+
+
+def _asterisk_read_banner(sock: socket.socket) -> None:
+    banner = sock.recv(512).decode("utf-8", errors="replace")
+    if "Asterisk Call Manager" not in banner:
+        raise RuntimeError("Asterisk AMI did not send a valid banner.")
+
+
+def _asterisk_send_action(
+    sock: socket.socket,
+    fields: list[tuple[str, str]],
+    *,
+    action_id: str | None = None,
+    require_response: bool = True,
+) -> dict[str, str]:
+    payload = "".join(f"{key}: {value}\r\n" for key, value in fields) + "\r\n"
+    sock.sendall(payload.encode("utf-8"))
+    if not require_response:
+        return {}
+    return _asterisk_read_response(sock, action_id=action_id)
+
+
+def _asterisk_read_response(
+    sock: socket.socket,
+    *,
+    action_id: str | None = None,
+) -> dict[str, str]:
+    deadline = time.monotonic() + 10.0
+    buffer = b""
+    while time.monotonic() < deadline:
+        try:
+            chunk = sock.recv(4096)
+        except (TimeoutError, socket.timeout):
+            continue
+        if not chunk:
+            break
+        buffer += chunk
+        while b"\r\n\r\n" in buffer:
+            raw, buffer = buffer.split(b"\r\n\r\n", 1)
+            message = _asterisk_parse_message(raw.decode("utf-8", errors="replace"))
+            if "Response" not in message:
+                continue
+            if action_id and message.get("ActionID") not in {"", action_id}:
+                continue
+            return message
+    raise RuntimeError("Timed out waiting for Asterisk AMI response.")
+
+
+def _asterisk_parse_message(raw: str) -> dict[str, str]:
+    message: dict[str, str] = {}
+    for line in raw.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        message[key.strip()] = value.strip()
+    return message
+
+
+def _asterisk_require_success(message: dict[str, str], action: str) -> None:
+    response = message.get("Response", "")
+    if response.casefold() != "success":
+        detail = message.get("Message") or response or "unknown error"
+        raise RuntimeError(f"{action} failed: {detail}")
 
 
 def _voximplant_script_custom_data(

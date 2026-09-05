@@ -258,6 +258,9 @@ def run_call_live_test(args: argparse.Namespace) -> None:
             recording_url = recording.recording_url
             duration_seconds = recording.duration_seconds
         elif provider_name in {
+            "asterisk",
+            "sipnet",
+            "asterisk_sip",
             "vox",
             "voximplant",
             "voximplant_dialog",
@@ -265,17 +268,23 @@ def run_call_live_test(args: argparse.Namespace) -> None:
         }:
             placement = service.place_call(request)
             print(render_call_placement(request, placement))
-            print(
-                "Диалог и финальный разбор выполняет Voximplant "
-                "scenario через Cloudflare Worker. Если в Worker заданы "
-                "TELEGRAM_BOT_TOKEN и SECRETARY_OWNER_TELEGRAM_ID, "
-                "результат придет в Telegram."
-            )
+            if provider_name in {"asterisk", "sipnet", "asterisk_sip"}:
+                print(
+                    "Диалог выполняет Asterisk AGI через Cloudflare Worker. "
+                    "Финальный разбор придет в Telegram."
+                )
+            else:
+                print(
+                    "Диалог и финальный разбор выполняет Voximplant "
+                    "scenario через Cloudflare Worker. Если в Worker заданы "
+                    "TELEGRAM_BOT_TOKEN и SECRETARY_OWNER_TELEGRAM_ID, "
+                    "результат придет в Telegram."
+                )
             return
         else:
             raise RuntimeError(
                 "Для call-live-test поставь "
-                "VOICE_BUSINESS_CALL_PROVIDER=voximplant_dialog "
+                "VOICE_BUSINESS_CALL_PROVIDER=sipnet "
                 "и VOICE_BUSINESS_CALLS_ENABLED=true."
             )
     except Exception as exc:

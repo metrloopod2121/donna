@@ -13,6 +13,7 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs
 
 from telegram_secretary.adapters.telephony import (
+    AsteriskBusinessCallProvider,
     ExolveBusinessCallProvider,
     VoximplantDialogueCallProvider,
     build_call_research_service,
@@ -185,6 +186,84 @@ class CallResearchTest(TestCase):
         service = build_call_research_service(config)
 
         self.assertIsInstance(service.provider, ExolveBusinessCallProvider)
+
+    def test_factory_uses_asterisk_provider_when_enabled(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "VOICE_BUSINESS_CALLS_ENABLED": "true",
+                "VOICE_BUSINESS_CALL_PROVIDER": "sipnet",
+                "ASTERISK_AMI_HOST": "172.17.0.1",
+                "ASTERISK_AMI_USERNAME": "secretary",
+                "ASTERISK_AMI_PASSWORD": "ami-secret",
+                "LLM_WORKER_URL": "https://secretary-ai.example.workers.dev",
+                "LLM_WORKER_BEARER_TOKEN": "worker-secret",
+            },
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        service = build_call_research_service(config)
+
+        self.assertIsInstance(service.provider, AsteriskBusinessCallProvider)
+
+    def test_asterisk_provider_writes_task_and_originates_call(self) -> None:
+        with TemporaryDirectory() as tmp:
+            task_dir = Path(tmp) / "container-tasks"
+            host_task_dir = Path(tmp) / "host-tasks"
+            fake_socket = _FakeAsteriskSocket(
+                [
+                    b"Asterisk Call Manager/8.0\r\n",
+                    b"Response: Success\r\nMessage: Authentication accepted\r\n\r\n",
+                    (
+                        b"Response: Success\r\n"
+                        b"ActionID: call_test\r\n"
+                        b"Message: Originate successfully queued\r\n\r\n"
+                    ),
+                ]
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "ASTERISK_AMI_HOST": "172.17.0.1",
+                    "ASTERISK_AMI_PORT": "5038",
+                    "ASTERISK_AMI_USERNAME": "secretary",
+                    "ASTERISK_AMI_PASSWORD": "ami-secret",
+                    "ASTERISK_ORIGINATE_ENDPOINT": "sipnet",
+                    "ASTERISK_ORIGINATE_CONTEXT": "secretary-dialog",
+                    "ASTERISK_ORIGINATE_EXTENSION": "s",
+                    "ASTERISK_TASK_DIR": str(task_dir),
+                    "ASTERISK_HOST_TASK_DIR": str(host_task_dir),
+                    "LLM_WORKER_URL": "https://secretary-ai.example.workers.dev",
+                    "LLM_WORKER_BEARER_TOKEN": "worker-secret",
+                    "SECRETARY_OWNER_TELEGRAM_ID": "12345",
+                },
+                clear=True,
+            ):
+                config = AppConfig.from_env()
+
+            with patch(
+                "telegram_secretary.adapters.telephony.socket.create_connection",
+                return_value=fake_socket,
+            ) as create_connection:
+                placement = AsteriskBusinessCallProvider(config).place_business_call(_request())
+
+            task = json.loads((task_dir / "call_test.json").read_text(encoding="utf-8"))
+            sent = b"".join(fake_socket.sent).decode("utf-8")
+
+            self.assertEqual(placement.provider, "asterisk")
+            self.assertEqual(placement.provider_call_id, "call_test")
+            self.assertEqual(task["destinationDigits"], "79991234567")
+            self.assertEqual(task["workerUrl"], "https://secretary-ai.example.workers.dev")
+            create_connection.assert_called_once_with(("172.17.0.1", 5038), timeout=10.0)
+            self.assertIn("Action: Login\r\n", sent)
+            self.assertIn("Action: Originate\r\n", sent)
+            self.assertIn("Channel: PJSIP/79991234567@sipnet\r\n", sent)
+            self.assertIn("Context: secretary-dialog\r\n", sent)
+            self.assertIn(
+                f"Variable: SECRETARY_TASK_PATH={host_task_dir / 'call_test.json'}\r\n",
+                sent,
+            )
 
     def test_factory_uses_voximplant_dialog_provider_when_enabled(self) -> None:
         with patch.dict(
@@ -563,6 +642,29 @@ class _FakeResponse:
 
     def read(self) -> bytes:
         return self.body
+
+
+class _FakeAsteriskSocket:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+        self.sent: list[bytes] = []
+
+    def __enter__(self) -> "_FakeAsteriskSocket":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def settimeout(self, _timeout: float) -> None:
+        return None
+
+    def recv(self, _size: int) -> bytes:
+        if not self.chunks:
+            return b""
+        return self.chunks.pop(0)
+
+    def sendall(self, payload: bytes) -> None:
+        self.sent.append(payload)
 
 
 class _ErrorBody:

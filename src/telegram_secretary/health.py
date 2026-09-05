@@ -251,6 +251,18 @@ def _missing_required_live_settings(config: AppConfig) -> list[str]:
         required["EXOLVE_API_KEY"] = config.exolve_api_key
         required["EXOLVE_SOURCE_PHONE"] = config.exolve_source_phone
     if config.voice_business_calls_enabled and provider_name in {
+        "asterisk",
+        "sipnet",
+        "asterisk_sip",
+    }:
+        required["ASTERISK_AMI_HOST"] = config.asterisk_ami_host
+        required["ASTERISK_AMI_USERNAME"] = config.asterisk_ami_username
+        required["ASTERISK_AMI_PASSWORD"] = config.asterisk_ami_password
+        required["ASTERISK_ORIGINATE_ENDPOINT"] = config.asterisk_originate_endpoint
+        required["ASTERISK_ORIGINATE_CONTEXT"] = config.asterisk_originate_context
+        required["LLM_WORKER_URL"] = config.llm_worker_url
+        required["LLM_WORKER_BEARER_TOKEN"] = config.llm_worker_bearer_token
+    if config.voice_business_calls_enabled and provider_name in {
         "vox",
         "voximplant",
         "voximplant_dialog",

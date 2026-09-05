@@ -19,6 +19,7 @@ services:
     volumes:
       - /var/lib/telegram-secretary/data:/app/data
       - /var/lib/telegram-secretary/sessions:/app/sessions
+      - /var/lib/telegram-secretary/asterisk:/app/asterisk
       - /var/lib/telegram-secretary/craft-export:/app/data/craft-export:ro
     security_opt:
       - no-new-privileges:true
@@ -27,4 +28,3 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m
-

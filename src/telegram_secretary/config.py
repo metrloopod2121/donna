@@ -94,6 +94,16 @@ class AppConfig:
     voximplant_max_turns: int
     voximplant_asr_language: str
     voximplant_voice: str
+    asterisk_ami_host: str
+    asterisk_ami_port: int
+    asterisk_ami_username: str
+    asterisk_ami_password: str = field(repr=False)
+    asterisk_originate_endpoint: str
+    asterisk_originate_context: str
+    asterisk_originate_extension: str
+    asterisk_task_dir: Path
+    asterisk_host_task_dir: Path
+    asterisk_caller_id: str
     call_analysis_provider: str
     llm_worker_url: str
     llm_worker_bearer_token: str = field(repr=False)
@@ -223,6 +233,23 @@ class AppConfig:
                 "VOXIMPLANT_VOICE",
                 "VoiceList.Yandex.ru_RU_oksana",
             ),
+            asterisk_ami_host=os.getenv("ASTERISK_AMI_HOST", "127.0.0.1"),
+            asterisk_ami_port=int(os.getenv("ASTERISK_AMI_PORT", "5038")),
+            asterisk_ami_username=os.getenv("ASTERISK_AMI_USERNAME", ""),
+            asterisk_ami_password=os.getenv("ASTERISK_AMI_PASSWORD", ""),
+            asterisk_originate_endpoint=os.getenv("ASTERISK_ORIGINATE_ENDPOINT", "sipnet"),
+            asterisk_originate_context=os.getenv(
+                "ASTERISK_ORIGINATE_CONTEXT",
+                "secretary-dialog",
+            ),
+            asterisk_originate_extension=os.getenv("ASTERISK_ORIGINATE_EXTENSION", "s"),
+            asterisk_task_dir=Path(
+                os.getenv("ASTERISK_TASK_DIR", "./data/asterisk/tasks")
+            ),
+            asterisk_host_task_dir=Path(
+                os.getenv("ASTERISK_HOST_TASK_DIR", "./data/asterisk/tasks")
+            ),
+            asterisk_caller_id=os.getenv("ASTERISK_CALLER_ID", "Donna"),
             call_analysis_provider=os.getenv("CALL_ANALYSIS_PROVIDER", "rule_based"),
             llm_worker_url=os.getenv("LLM_WORKER_URL", ""),
             llm_worker_bearer_token=os.getenv("LLM_WORKER_BEARER_TOKEN", ""),

@@ -82,10 +82,19 @@ function createOutboundCall() {
   const transport = callTransport();
   if (transport === "sip") {
     Logger.write(`Starting secretary SIP dialogue call ${task.requestId || ""} to ${task.sipUri}`);
-    return VoxEngine.callSIP(task.sipUri, sipCallParameters());
+    return createSipCall();
   }
   Logger.write(`Starting secretary PSTN dialogue call ${task.requestId || ""} to ${task.destination}`);
   return VoxEngine.callPSTN(task.destination, task.callerId);
+}
+
+function createSipCall() {
+  const parameters = sipCallParameters();
+  const callerId = parameters.callerid || "";
+  if (parameters.regId) {
+    return VoxEngine.callSIP(task.sipUri, callerId, { regId: parameters.regId });
+  }
+  return VoxEngine.callSIP(task.sipUri, parameters);
 }
 
 function onConnected() {

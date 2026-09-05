@@ -791,6 +791,7 @@ def _asterisk_raise_immediate_originate_failure(
     deadline = time.monotonic() + wait_seconds
     buffer = b""
     last_cause = ""
+    failure_detail = ""
     while time.monotonic() < deadline:
         try:
             chunk = sock.recv(4096)
@@ -805,12 +806,18 @@ def _asterisk_raise_immediate_originate_failure(
             event = message.get("Event", "")
             if event == "Hangup":
                 last_cause = message.get("Cause-txt") or message.get("Cause") or last_cause
+                if failure_detail:
+                    raise RuntimeError(f"Asterisk originate failed: {last_cause or failure_detail}")
             if event != "OriginateResponse" or message.get("ActionID") != action_id:
                 continue
             if message.get("Response", "").casefold() == "failure":
-                detail = last_cause or message.get("Message") or "originate failed"
-                raise RuntimeError(f"Asterisk originate failed: {detail}")
+                failure_detail = message.get("Message") or "originate failed"
+                if last_cause:
+                    raise RuntimeError(f"Asterisk originate failed: {last_cause}")
+                continue
             return
+    if failure_detail:
+        raise RuntimeError(f"Asterisk originate failed: {last_cause or failure_detail}")
 
 
 def _asterisk_parse_message(raw: str) -> dict[str, str]:

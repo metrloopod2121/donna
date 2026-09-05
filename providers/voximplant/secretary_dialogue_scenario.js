@@ -1,5 +1,4 @@
 require(Modules.ASR);
-require(Modules.Net);
 
 const DEFAULT_WORKER_SECRET = "SECRETARY_AI_TOKEN";
 const DEFAULT_ASR_LANGUAGE = "ASRLanguage.RUSSIAN_RU";

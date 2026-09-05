@@ -342,6 +342,7 @@ def _safe_call_error(exc: Exception, config: AppConfig) -> str:
         config.cloudflare_api_token,
         config.exolve_api_key,
         config.voximplant_credentials_json,
+        config.asterisk_ami_password,
     ):
         if secret:
             text = text.replace(secret, "<secret>")

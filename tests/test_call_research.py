@@ -265,6 +265,49 @@ class CallResearchTest(TestCase):
                 sent,
             )
 
+    def test_asterisk_provider_reports_immediate_originate_failure(self) -> None:
+        with TemporaryDirectory() as tmp:
+            fake_socket = _FakeAsteriskSocket(
+                [
+                    b"Asterisk Call Manager/8.0\r\n",
+                    b"Response: Success\r\nMessage: Authentication accepted\r\n\r\n",
+                    (
+                        b"Response: Success\r\n"
+                        b"ActionID: call_test\r\n"
+                        b"Message: Originate successfully queued\r\n\r\n"
+                    ),
+                    (
+                        b"Event: Hangup\r\n"
+                        b"Cause: 1\r\n"
+                        b"Cause-txt: Unallocated (unassigned) number\r\n\r\n"
+                        b"Event: OriginateResponse\r\n"
+                        b"ActionID: call_test\r\n"
+                        b"Response: Failure\r\n"
+                        b"Reason: 0\r\n\r\n"
+                    ),
+                ]
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "ASTERISK_AMI_USERNAME": "secretary",
+                    "ASTERISK_AMI_PASSWORD": "ami-secret",
+                    "ASTERISK_TASK_DIR": str(Path(tmp) / "container-tasks"),
+                    "ASTERISK_HOST_TASK_DIR": str(Path(tmp) / "host-tasks"),
+                    "LLM_WORKER_URL": "https://secretary-ai.example.workers.dev",
+                    "LLM_WORKER_BEARER_TOKEN": "worker-secret",
+                },
+                clear=True,
+            ):
+                config = AppConfig.from_env()
+
+            with patch(
+                "telegram_secretary.adapters.telephony.socket.create_connection",
+                return_value=fake_socket,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Unallocated"):
+                    AsteriskBusinessCallProvider(config).place_business_call(_request())
+
     def test_factory_uses_voximplant_dialog_provider_when_enabled(self) -> None:
         with patch.dict(
             os.environ,

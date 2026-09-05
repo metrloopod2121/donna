@@ -711,7 +711,7 @@ def _asterisk_originate(
                 ("Action", "Login"),
                 ("Username", config.asterisk_ami_username),
                 ("Secret", config.asterisk_ami_password),
-                ("Events", "off"),
+                ("Events", "on"),
             ],
         )
         _asterisk_require_success(login, "Asterisk AMI login")
@@ -731,6 +731,7 @@ def _asterisk_originate(
             fields.append(("Variable", f"{name}={value}"))
         response = _asterisk_send_action(sock, fields, action_id=action_id)
         _asterisk_require_success(response, "Asterisk originate")
+        _asterisk_raise_immediate_originate_failure(sock, action_id=action_id)
         _asterisk_send_action(sock, [("Action", "Logoff")], require_response=False)
         return response
 
@@ -779,6 +780,37 @@ def _asterisk_read_response(
                 continue
             return message
     raise RuntimeError("Timed out waiting for Asterisk AMI response.")
+
+
+def _asterisk_raise_immediate_originate_failure(
+    sock: socket.socket,
+    *,
+    action_id: str,
+    wait_seconds: float = 4.0,
+) -> None:
+    deadline = time.monotonic() + wait_seconds
+    buffer = b""
+    last_cause = ""
+    while time.monotonic() < deadline:
+        try:
+            chunk = sock.recv(4096)
+        except (TimeoutError, socket.timeout):
+            continue
+        if not chunk:
+            return
+        buffer += chunk
+        while b"\r\n\r\n" in buffer:
+            raw, buffer = buffer.split(b"\r\n\r\n", 1)
+            message = _asterisk_parse_message(raw.decode("utf-8", errors="replace"))
+            event = message.get("Event", "")
+            if event == "Hangup":
+                last_cause = message.get("Cause-txt") or message.get("Cause") or last_cause
+            if event != "OriginateResponse" or message.get("ActionID") != action_id:
+                continue
+            if message.get("Response", "").casefold() == "failure":
+                detail = last_cause or message.get("Message") or "originate failed"
+                raise RuntimeError(f"Asterisk originate failed: {detail}")
+            return
 
 
 def _asterisk_parse_message(raw: str) -> dict[str, str]:

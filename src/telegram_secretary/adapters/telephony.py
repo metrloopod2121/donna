@@ -619,9 +619,7 @@ def _voximplant_script_custom_data(
     if transport == "pstn":
         payload["callerId"] = normalize_phone_e164(config.voximplant_caller_id)
     else:
-        caller_id = _optional_normalized_phone(
-            config.voximplant_sip_caller_id or config.voximplant_caller_id
-        )
+        caller_id = (config.voximplant_sip_caller_id or config.voximplant_caller_id).strip()
         payload["sipUri"] = _voximplant_sip_uri(destination, config)
         if caller_id:
             payload["callerId"] = caller_id
@@ -683,13 +681,6 @@ def _voximplant_sip_uri(destination_e164: str, config: AppConfig) -> str:
     if "@" in uri and not uri.startswith(("sip:", "sips:")):
         return f"sip:{uri}"
     return uri
-
-
-def _optional_normalized_phone(raw_phone: str) -> str:
-    if not raw_phone.strip():
-        return ""
-    return normalize_phone_e164(raw_phone)
-
 
 def _voximplant_management_token(config: AppConfig) -> str:
     credentials = _load_voximplant_credentials(config)

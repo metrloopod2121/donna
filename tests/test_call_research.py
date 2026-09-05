@@ -330,7 +330,7 @@ class CallResearchTest(TestCase):
                 "VOXIMPLANT_SIP_AUTH_USER": "sip-login",
                 "VOXIMPLANT_SIP_PASSWORD_SECRET_NAME": "SIP_PASSWORD",
                 "VOXIMPLANT_SIP_OUTBOUND_PROXY": "sip.provider.example",
-                "VOXIMPLANT_SIP_CALLER_ID": "+74951234567",
+                "VOXIMPLANT_SIP_CALLER_ID": "0042731693",
                 "VOXIMPLANT_SIP_DISPLAY_NAME": "Donna",
                 "LLM_WORKER_URL": "https://secretary-ai.example.workers.dev",
             },
@@ -367,7 +367,7 @@ class CallResearchTest(TestCase):
             session_payload["sipOutboundProxy"],  # type: ignore[index]
             "sip.provider.example",
         )
-        self.assertEqual(session_payload["sipCallerId"], "+74951234567")  # type: ignore[index]
+        self.assertEqual(session_payload["sipCallerId"], "0042731693")  # type: ignore[index]
         self.assertEqual(session_payload["sipDisplayName"], "Donna")  # type: ignore[index]
 
     def test_voximplant_management_token_uses_string_issuer(self) -> None:

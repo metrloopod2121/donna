@@ -80,6 +80,7 @@ async function dialogueTurn(request, env) {
 async function dialogueFinal(request, env) {
   const payload = await request.json();
   const transcript = dialogueTranscript(payload);
+  const callFailure = callFailureText(payload);
   const analysisPayload = {
     request_id: payload.requestId || "",
     target_name: payload.targetName || "Организация",
@@ -88,7 +89,19 @@ async function dialogueFinal(request, env) {
     transcript,
     recording_url: payload.recordingUrl || "",
     ended_reason: payload.reason || "",
+    failure_detail: payload.failureDetail || "",
   };
+  if (!transcript && callFailure) {
+    const extraction = failedCallExtraction(analysisPayload, callFailure);
+    const text = JSON.stringify(extraction);
+    const telegram = await sendTelegramSummary(env, payload, text, extraction);
+    return json({
+      text,
+      extraction,
+      telegram_sent: telegram.sent,
+      telegram_error: telegram.error || "",
+    });
+  }
   let text = "";
   try {
     text = await runTextModel(env, buildCallMessages(analysisPayload), 900, 0.1);
@@ -369,6 +382,30 @@ function telegramMessage(payload, text, extraction) {
   }
   lines.push(`Уверенность: ${clampConfidence(extraction.confidence).toFixed(2)}`);
   return truncateTelegram(lines.join("\n"));
+}
+
+function callFailureText(payload) {
+  const reason = cleanText(payload.reason || "");
+  const detail = cleanText(payload.failureDetail || "");
+  if (!reason.startsWith("call_") && !detail) {
+    return "";
+  }
+  return [reason, detail].filter(Boolean).join(": ");
+}
+
+function failedCallExtraction(payload, failure) {
+  const actions = ["Проверить статус исходящих звонков у SIP-провайдера"];
+  const normalized = failure.toLowerCase();
+  if (normalized.includes("402") || normalized.includes("payment required")) {
+    actions.unshift("Пополнить баланс или завершить активацию исходящих звонков SIPNET");
+  }
+  return {
+    summary: `Звонок не состоялся. Провайдер вернул ошибку: ${failure}.`,
+    facts: [],
+    missing_items: cleanList(payload.questions),
+    next_actions: actions,
+    confidence: 0,
+  };
 }
 
 function fallbackExtraction(payload, error) {

@@ -20,6 +20,7 @@ let noInputTimer = null;
 let pauseTimer = null;
 let utteranceTimer = null;
 let startWaitTimer = null;
+let failureDetail = "";
 
 VoxEngine.addEventListener(AppEvents.HttpRequest, (event) => {
   try {
@@ -58,8 +59,16 @@ function startOutboundCall() {
   clearTimer("startWait");
   call = createOutboundCall();
   call.addEventListener(CallEvents.Connected, onConnected);
-  call.addEventListener(CallEvents.Failed, () => finalizeAndTerminate("call_failed"));
-  call.addEventListener(CallEvents.Disconnected, () => finalizeAndTerminate("call_disconnected"));
+  call.addEventListener(CallEvents.Failed, (event) => {
+    failureDetail = callFailureDetail(event);
+    Logger.write(`Call failed: ${failureDetail || "unknown"}`);
+    finalizeAndTerminate("call_failed");
+  });
+  call.addEventListener(CallEvents.Disconnected, (event) => {
+    failureDetail = callFailureDetail(event);
+    Logger.write(`Call disconnected: ${failureDetail || "no_details"}`);
+    finalizeAndTerminate("call_disconnected");
+  });
   call.addEventListener(CallEvents.PlaybackFinished, onPlaybackFinished);
   call.addEventListener(CallEvents.RecordStarted, (event) => {
     recordingUrl = event.url || recordingUrl;
@@ -257,6 +266,7 @@ function finalPayload(reason) {
   payload.callerId = task.callerId || "";
   payload.transport = callTransport();
   payload.sipUri = task.sipUri || "";
+  payload.failureDetail = failureDetail;
   payload.ownerTelegramChatId = task.ownerTelegramChatId || "";
   return payload;
 }
@@ -394,6 +404,26 @@ function sipCallParameters() {
     }
   }
   return parameters;
+}
+
+function callFailureDetail(event) {
+  if (!event) {
+    return "";
+  }
+  const parts = [];
+  if (event.code) {
+    parts.push(`code ${event.code}`);
+  }
+  if (event.reason) {
+    parts.push(String(event.reason));
+  }
+  if (event.error) {
+    parts.push(String(event.error));
+  }
+  if (event.message) {
+    parts.push(String(event.message));
+  }
+  return parts.join(": ");
 }
 
 function maxTurns() {

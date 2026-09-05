@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
+from urllib.error import HTTPError
 from urllib.parse import parse_qs
 
 from telegram_secretary.adapters.telephony import (
@@ -18,6 +19,7 @@ from telegram_secretary.adapters.telephony import (
     build_twilio_business_call_twiml,
     build_twilio_live_test_twiml,
     _exolve_transcription_text,
+    _voximplant_push_session_task,
     _voximplant_management_token,
 )
 from telegram_secretary.call_research import (
@@ -410,6 +412,35 @@ class CallResearchTest(TestCase):
         self.assertIsInstance(payload["iss"], str)  # type: ignore[index]
         self.assertEqual(seen["algorithm"], "RS256")
 
+    def test_voximplant_session_task_retries_until_access_url_is_ready(self) -> None:
+        attempts = 0
+
+        def fake_urlopen(_request: object, timeout: float) -> _FakeResponse:
+            nonlocal attempts
+            attempts += 1
+            self.assertGreater(timeout, 0)
+            if attempts == 1:
+                raise HTTPError(
+                    "https://session.example/request",
+                    404,
+                    "Not Found",
+                    hdrs=None,
+                    fp=_ErrorBody(b""),
+                )
+            return _FakeResponse(b"{}")
+
+        with (
+            patch("telegram_secretary.adapters.telephony.urlopen", fake_urlopen),
+            patch("telegram_secretary.adapters.telephony.time.sleep", lambda _seconds: None),
+        ):
+            _voximplant_push_session_task(
+                {"media_session_access_secure_url": "https://session.example/request"},
+                {"requestId": "call_test"},
+                timeout_seconds=2.0,
+            )
+
+        self.assertEqual(attempts, 2)
+
     def test_exolve_provider_posts_make_voice_message(self) -> None:
         seen: dict[str, object] = {}
 
@@ -532,3 +563,14 @@ class _FakeResponse:
 
     def read(self) -> bytes:
         return self.body
+
+
+class _ErrorBody:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def read(self) -> bytes:
+        return self.body
+
+    def close(self) -> None:
+        return None

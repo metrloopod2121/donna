@@ -786,25 +786,39 @@ def _voximplant_push_session_task(
     if not access_url:
         raise RuntimeError("Voximplant response has no media session access URL.")
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = Request(
-        access_url,
-        data=data,
-        headers={
-            "Content-Type": "application/json; charset=utf-8",
-            "User-Agent": "telegram-secretary/0.1",
-        },
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=timeout_seconds) as response:
-            response.read()
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Voximplant session task delivery failed {exc.code}: {detail[:240]}"
-        ) from exc
-    except URLError as exc:
-        raise RuntimeError(f"Voximplant session task delivery failed: {exc.reason}") from exc
+    deadline = time.monotonic() + timeout_seconds
+    last_404_detail = ""
+    while True:
+        request = Request(
+            access_url,
+            data=data,
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "User-Agent": "telegram-secretary/0.1",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=min(5.0, timeout_seconds)) as response:
+                response.read()
+                return
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code != 404 or time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Voximplant session task delivery failed {exc.code}: {detail[:240]}"
+                ) from exc
+            last_404_detail = detail[:240]
+            time.sleep(0.5)
+        except URLError as exc:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Voximplant session task delivery failed: {exc.reason}"
+                ) from exc
+            time.sleep(0.5)
+        if time.monotonic() >= deadline:
+            detail = f": {last_404_detail}" if last_404_detail else ""
+            raise RuntimeError(f"Voximplant session task delivery timed out{detail}")
 
 
 def _validate_voximplant_response(response: dict[str, Any]) -> None:
